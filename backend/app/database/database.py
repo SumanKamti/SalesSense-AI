@@ -1,6 +1,9 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
+from app.database.base import Base
+from app.models import *
+
 
 engine = create_engine(
     settings.DATABASE_URL,
@@ -18,3 +21,5 @@ def get_db():
         yield db
     finally:
         db.close()
+
+Base.metadata.create_all(bind=engine)
