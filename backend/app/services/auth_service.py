@@ -5,7 +5,13 @@ from app.core.security import hash_password
 
 
 def create_user(db: Session, user: UserCreate):
-
+    """
+    Create a new user account.
+    Returns:
+        User object if successful.
+    Returns None if email already exists.
+    """
+    
     existing_user = (
         db.query(User)
         .filter(User.email == user.email)
@@ -18,8 +24,7 @@ def create_user(db: Session, user: UserCreate):
     db_user = User(
         full_name=user.full_name,
         email=user.email,
-        hashed_password=hash_password(user.password),
-        created_at="2026-07-22"
+        hashed_password=hash_password(user.password)
     )
 
     db.add(db_user)
