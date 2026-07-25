@@ -32,7 +32,10 @@ function UploadCard({ onTranscript }) {
             );
             onTranscript(response.data.transcript);
         } catch (error) {
-            console.error(error);
+            console.log("Full Error:", error);
+            console.log("Response:", error.response);
+            console.log("Data:", error.response?.data);
+            console.log("Status:", error.response?.status);
             alert("Failed to transcribe audio.");
         } finally {
             setLoading(false);
