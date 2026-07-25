@@ -1,9 +1,16 @@
-function Dashboard(){
+import Navbar from "../components/Navbar";
+import UploadCard from "../components/UploadCard";
+import TranscriptCard from "../components/TranscriptCard";
+
+function Dashboard() {
     return (
-        <div>
-            <h1>SalesSense AI</h1>
-            <p>AI Sales Conversation Analyzer</p>
-        </div>
+        <>
+            <Navbar />
+            <div className="container">
+                <UploadCard />
+                <TranscriptCard />
+            </div>
+        </>
     );
 }
 
