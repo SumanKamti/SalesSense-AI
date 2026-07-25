@@ -1,9 +1,9 @@
-function TranscriptCard() {
+function TranscriptCard({ transcript }) {
     return (
         <div className="card">
             <h2>Transcript</h2>
             <p>
-                Transcript will appear here...
+                {transcript || "Transcript will appear here..."}
             </p>
         </div>
     );

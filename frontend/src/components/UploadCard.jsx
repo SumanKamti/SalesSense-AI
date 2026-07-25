@@ -1,38 +1,58 @@
 import { useState } from "react";
+import api from "../services/api";
 
-function UploadCard() {
+function UploadCard({ onTranscript }) {
     const [selectedFile, setSelectedFile] = useState(null);
     const [loading, setLoading] = useState(false);
-    const handleFileChange = (event) => {
-        if (event.target.files.length > 0) {
-            setSelectedFile(event.target.files[0]);
+    const handleFileChange = (e) => {
+        if (e.target.files.length > 0) {
+            setSelectedFile(e.target.files[0]);
         }
     };
 
-    const handleAnalyze = () => {
+    const handleAnalyze = async () => {
         if (!selectedFile) {
             alert("Please select an audio file.");
             return;
         }
-        setLoading(true);
 
-        setTimeout(() => {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+
+        try {
+            setLoading(true);
+            const response = await api.post(
+                "/transcription/transcribe",
+                formData,
+                {
+                    headers: {
+                        "Content-Type": "multipart/form-data"
+                    }
+                }
+            );
+            onTranscript(response.data.transcript);
+        } catch (error) {
+            console.error(error);
+            alert("Failed to transcribe audio.");
+        } finally {
             setLoading(false);
-        }, 3000);
+        }
     };
 
     return (
         <div className="card">
             <h2>📁 Upload Sales Call</h2>
+
             <label className="upload-box">
-            <input
+                <input
                     type="file"
+                    hidden
                     accept="audio/*"
                     onChange={handleFileChange}
-                    hidden
                 />
                 Click here to select an audio file
             </label>
+
             {selectedFile && (
                 <div className="file-info">
                     <p><strong>File:</strong> {selectedFile.name}</p>
@@ -49,6 +69,7 @@ function UploadCard() {
             >
                 {loading ? "Analyzing..." : "Analyze Audio"}
             </button>
+
         </div>
     );
 }
