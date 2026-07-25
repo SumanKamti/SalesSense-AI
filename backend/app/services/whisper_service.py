@@ -1,7 +1,15 @@
-import whisper
+from faster_whisper import WhisperModel
 
-model = whisper.load_model("base")
+# Load model once when the server starts
+model = WhisperModel(
+    "base",
+    device="cpu",
+    compute_type="int8"
+)
 
 def transcribe_audio(file_path: str):
-    result = model.transcribe(file_path)
-    return result["text"]
+    segments, info = model.transcribe(file_path)
+    transcript = ""
+    for segment in segments:
+        transcript += segment.text + " "
+    return transcript.strip()

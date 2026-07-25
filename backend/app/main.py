@@ -15,7 +15,6 @@ app.include_router(
 
 @app.get("/")
 def home():
-
     return {
         "Application": settings.APP_NAME,
         "Version": settings.APP_VERSION
