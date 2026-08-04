@@ -1,9 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import api from "../services/api";
 
-function UploadCard({ onTranscript }) {
+function UploadCard({ onResult }) {
     const [selectedFile, setSelectedFile] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [elapsedTime, setElapsedTime] = useState(0);
+
+    useEffect(() => {
+        let timer;
+        if (loading) {
+            timer = setInterval(() => {
+                setElapsedTime((prev) => prev + 1);
+            }, 1000);
+        } else {
+            setElapsedTime(0);
+        }
+        return () => clearInterval(timer);
+    }, [loading]);
+
     const handleFileChange = (e) => {
         if (e.target.files.length > 0) {
             setSelectedFile(e.target.files[0]);
@@ -21,22 +35,23 @@ function UploadCard({ onTranscript }) {
 
         try {
             setLoading(true);
+            setElapsedTime(0);
             const response = await api.post(
-                "/transcription/transcribe",
+                "/conversation/analyze",
                 formData,
                 {
                     headers: {
-                        "Content-Type": "multipart/form-data"
-                    }
+                        "Content-Type": "multipart/form-data",
+                    },
                 }
             );
-            onTranscript(response.data.transcript);
+            onResult(response.data.conversation);
         } catch (error) {
             console.log("Full Error:", error);
             console.log("Response:", error.response);
             console.log("Data:", error.response?.data);
             console.log("Status:", error.response?.status);
-            alert("Failed to transcribe audio.");
+            alert("Failed to analyze audio. Check console and backend logs.");
         } finally {
             setLoading(false);
         }
@@ -58,7 +73,9 @@ function UploadCard({ onTranscript }) {
 
             {selectedFile && (
                 <div className="file-info">
-                    <p><strong>File:</strong> {selectedFile.name}</p>
+                    <p>
+                        <strong>File:</strong> {selectedFile.name}
+                    </p>
                     <p>
                         <strong>Size:</strong>{" "}
                         {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
@@ -66,13 +83,10 @@ function UploadCard({ onTranscript }) {
                 </div>
             )}
 
-            <button
-                onClick={handleAnalyze}
-                disabled={loading}
-            >
-                {loading ? "Analyzing..." : "Analyze Audio"}
+            <button onClick={handleAnalyze} disabled={loading} className={loading ? "loading-btn" : ""}>
+                {loading && <span className="spinner"></span>}
+                {loading ? `Analyzing... (${elapsedTime}s elapsed)` : "Analyze Audio"}
             </button>
-
         </div>
     );
 }

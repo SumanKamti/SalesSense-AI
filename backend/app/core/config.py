@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    # AI / Diarization
+    HUGGINGFACE_TOKEN: str = ""
+    DIARIZATION_MODEL: str = "pyannote/speaker-diarization-3.1"
+
     class Config:
         env_file = ".env"
 

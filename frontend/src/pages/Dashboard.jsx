@@ -4,17 +4,14 @@ import UploadCard from "../components/UploadCard";
 import TranscriptCard from "../components/TranscriptCard";
 
 function Dashboard() {
-    const [transcript, setTranscript] = useState("");
+    const [conversation, setConversation] = useState([]);
+
     return (
         <>
             <Navbar />
             <div className="container">
-                <UploadCard
-                    onTranscript={setTranscript}
-                />
-                <TranscriptCard
-                    transcript={transcript}
-                />
+                <UploadCard onResult={setConversation} />
+                <TranscriptCard conversation={conversation} />
             </div>
         </>
     );
