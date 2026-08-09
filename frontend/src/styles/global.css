@@ -248,3 +248,195 @@ button:disabled{
     color: #7f1d1d;
     background: none;
 }
+
+/* ---- AI Analysis Card ---- */
+
+.analysis-card {
+    margin-top: 0;
+}
+
+.gemini-btn {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.3px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.gemini-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.35);
+    background: linear-gradient(135deg, #4f46e5, #7c3aed, #9333ea);
+}
+
+.reanalyze-btn {
+    margin-top: 25px;
+    background: #64748b;
+    font-size: 14px;
+    padding: 10px;
+}
+
+.reanalyze-btn:hover:not(:disabled) {
+    background: #475569;
+    box-shadow: 0 4px 12px rgba(71, 85, 105, 0.3);
+}
+
+/* Results */
+.analysis-results h2 {
+    margin-bottom: 25px;
+    font-size: 22px;
+    text-align: center;
+}
+
+.analysis-header-row {
+    display: flex;
+    gap: 30px;
+    justify-content: center;
+    align-items: flex-start;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
+
+.analysis-score-section,
+.analysis-sentiment-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 140px;
+}
+
+.analysis-score-section h3,
+.analysis-sentiment-section h3 {
+    font-size: 14px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0;
+}
+
+/* Score Circle */
+.score-circle-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.score-value {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.score-number {
+    font-size: 32px;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1;
+}
+
+.score-label {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+/* Sentiment Badge */
+.sentiment-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 20px;
+    border-radius: 50px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.sentiment-positive {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sentiment-neutral {
+    background: #fef9c3;
+    color: #854d0e;
+}
+
+.sentiment-negative {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Sections */
+.analysis-section {
+    margin-bottom: 22px;
+    padding: 18px;
+    background: #f8fafc;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+}
+
+.analysis-section h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+    margin: 0 0 12px 0;
+}
+
+.analysis-summary {
+    font-size: 15px;
+    line-height: 1.7;
+    color: #475569;
+    margin: 0;
+}
+
+/* Lists */
+.analysis-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.analysis-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #334155;
+}
+
+.list-icon {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+.strength-icon {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.weakness-icon {
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 16px;
+}
+
+.suggestion-icon {
+    background: #e0e7ff;
+    color: #3730a3;
+    font-size: 11px;
+}
