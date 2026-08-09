@@ -34,6 +34,8 @@ def _compute_overlap(seg_a: Dict, seg_b: Dict) -> float:
     return max(0.0, overlap_end - overlap_start)
 
 
+import bisect
+
 def _assign_speakers(
     transcription_segments: List[Dict],
     diarization_segments: List[Dict],
@@ -41,16 +43,30 @@ def _assign_speakers(
     """Label every transcription segment with its best-matching speaker."""
 
     labeled: List[Dict[str, Any]] = []
+    
+    # Sort diarization_segments by start time for binary search
+    diarization_segments = sorted(diarization_segments, key=lambda x: x["start"])
+    d_starts = [seg["start"] for seg in diarization_segments]
 
     for t_seg in transcription_segments:
         best_speaker = "UNKNOWN"
         best_overlap = 0.0
 
-        for d_seg in diarization_segments:
-            overlap = _compute_overlap(t_seg, d_seg)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_speaker = d_seg["speaker"]
+        # Find where the transcription segment would be inserted
+        idx = bisect.bisect_left(d_starts, t_seg["start"])
+        
+        # Check nearby diarization segments that could overlap
+        # We start looking from idx-1, and stop when d_seg.start >= t_seg.end
+        start_idx = max(0, idx - 1)
+        for d_seg in diarization_segments[start_idx:]:
+            if d_seg["start"] >= t_seg["end"]:
+                break # no more possible overlaps
+            
+            if d_seg["end"] > t_seg["start"]: # potential overlap
+                overlap = _compute_overlap(t_seg, d_seg)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_speaker = d_seg["speaker"]
 
         labeled.append({
             "speaker": best_speaker,

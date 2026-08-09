@@ -97,6 +97,9 @@ def get_pipeline() -> Any:
 def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
     """Run speaker diarization on an audio file.
 
+    Delegates to either the lightweight (resemblyzer) or pyannote engine
+    based on the ``DIARIZATION_ENGINE`` setting in config.
+
     Args:
         audio_path: Path to the audio file on disk.
 
@@ -107,8 +110,24 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
         - ``end``      – segment end time in seconds
 
     Raises:
-        PipelineNotLoadedError: If the pipeline is unavailable.
+        PipelineNotLoadedError: If the pyannote pipeline is unavailable.
         DiarizationError: If processing the audio file fails.
+    """
+    if settings.DIARIZATION_ENGINE == "lightweight":
+        from app.services.lightweight_diarization_service import (
+            diarize_audio as lightweight_diarize,
+        )
+        return lightweight_diarize(audio_path)
+
+    # ---------- Original pyannote path ----------
+    return _pyannote_diarize_audio(audio_path)
+
+
+def _pyannote_diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
+    """Run speaker diarization using the pyannote pipeline (original code).
+
+    This is the original implementation kept intact for when the user
+    switches ``DIARIZATION_ENGINE`` to ``"pyannote"``.
     """
     import librosa
     import torch
@@ -126,7 +145,7 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
 
         audio_input = {
             "waveform": waveform_tensor,
-            "sample_rate": sample_rate,
+            "sample_rate": int(sample_rate),
         }
 
         logger.info("Running diarization model (this may take a few minutes)...")

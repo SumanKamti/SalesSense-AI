@@ -1,7 +1,7 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile
 import logging
 import os
-import shutil
+import tempfile
 
 from app.services.diarization_service import (
     DiarizationError,
@@ -16,17 +16,28 @@ router = APIRouter()
 UPLOAD_FOLDER = "app/uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"}
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
 @router.post("/diarize")
 async def diarize(file: UploadFile = File(...)):
     """Upload an audio file and receive speaker-segmented diarization."""
 
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported file extension.")
+    
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File size exceeds limit.")
+
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=UPLOAD_FOLDER)
+    file_path = temp_file.name
 
     try:
         # ---- persist the uploaded file ----
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        temp_file.write(contents)
+        temp_file.close()
 
         # ---- run diarization ----
         segments = diarize_audio(file_path)

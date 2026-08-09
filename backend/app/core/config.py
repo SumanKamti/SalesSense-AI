@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # AI / Diarization
     HUGGINGFACE_TOKEN: str = ""
     DIARIZATION_MODEL: str = "pyannote/speaker-diarization-3.1"
+    DIARIZATION_ENGINE: str = "lightweight"  # "lightweight" or "pyannote"
 
     class Config:
         env_file = ".env"

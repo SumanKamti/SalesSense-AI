@@ -5,6 +5,7 @@ function UploadCard({ onResult }) {
     const [selectedFile, setSelectedFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
+    const [error, setError] = useState(null);
 
     useEffect(() => {
         let timer;
@@ -25,8 +26,9 @@ function UploadCard({ onResult }) {
     };
 
     const handleAnalyze = async () => {
+        setError(null);
         if (!selectedFile) {
-            alert("Please select an audio file.");
+            setError("Please select an audio file.");
             return;
         }
 
@@ -51,7 +53,7 @@ function UploadCard({ onResult }) {
             console.log("Response:", error.response);
             console.log("Data:", error.response?.data);
             console.log("Status:", error.response?.status);
-            alert("Failed to analyze audio. Check console and backend logs.");
+            setError(error.response?.data?.detail || "Failed to analyze audio. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -87,6 +89,12 @@ function UploadCard({ onResult }) {
                 {loading && <span className="spinner"></span>}
                 {loading ? `Analyzing... (${elapsedTime}s elapsed)` : "Analyze Audio"}
             </button>
+            {error && (
+                <div className="error-banner">
+                    <span>⚠️ {error}</span>
+                    <button onClick={() => setError(null)} className="error-close">✕</button>
+                </div>
+            )}
         </div>
     );
 }
