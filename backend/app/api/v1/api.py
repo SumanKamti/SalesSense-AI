@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     diarization,
     health,
     transcription,
+    history,
 )
 
 api_router = APIRouter()
@@ -44,4 +45,10 @@ api_router.include_router(
     analysis.router,
     prefix="/analysis",
     tags=["AI Analysis"]
+)
+
+api_router.include_router(
+    history.router,
+    prefix="/history",
+    tags=["Call History"]
 )

@@ -8,6 +8,7 @@ weaknesses, suggestions).
 
 import json
 import logging
+import re
 from typing import Any, Dict, List
 
 from app.core.config import settings
@@ -99,16 +100,20 @@ def analyze_conversation(conversation: List[Dict[str, Any]]) -> Dict[str, Any]:
             f"{transcript}"
         )
 
-        # --- Call Gemini with fallback models ---
+        # --- Call Gemini with active, supported models ---
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
         candidate_models = [
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash-preview",
         ]
 
         response = None
         last_err = None
+        is_rate_limited = False
+
         for model_name in candidate_models:
             try:
                 logger.info("Attempting analysis with model: %s", model_name)
@@ -121,13 +126,24 @@ def analyze_conversation(conversation: List[Dict[str, Any]]) -> Dict[str, Any]:
                     ),
                 )
                 if response and response.text:
+                    logger.info("Analysis succeeded with model: %s", model_name)
                     break
             except Exception as e:
-                logger.warning("Model %s failed: %s. Trying next model...", model_name, e)
-                last_err = e
+                err_str = str(e)
+                logger.warning("Model %s failed: %s. Trying next model...", model_name, err_str)
+                last_err = err_str
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower():
+                    is_rate_limited = True
 
         if not response or not response.text:
-            raise AnalysisError(f"All Gemini models failed. Last error: {last_err}")
+            if is_rate_limited:
+                retry_match = re.search(r"retry in ([\d\.]+s?)", str(last_err), re.IGNORECASE)
+                retry_time = f" (retry in ~{retry_match.group(1)})" if retry_match else ""
+                raise AnalysisError(
+                    f"Gemini API rate limit reached on Free Tier{retry_time}. "
+                    "Please wait about a minute and try again, or create a fresh Gemini API key at https://aistudio.google.com."
+                )
+            raise AnalysisError(f"AI evaluation service could not process the request. Details: {last_err}")
 
         raw_text = response.text.strip()
         logger.info("Gemini response received (%d chars).", len(raw_text))
@@ -178,7 +194,7 @@ def analyze_conversation(conversation: List[Dict[str, Any]]) -> Dict[str, Any]:
     except json.JSONDecodeError as exc:
         logger.exception("Failed to parse Gemini response as JSON.")
         raise AnalysisError(
-            "Gemini returned an invalid response. Please try again."
+            "Gemini returned an unparseable response. Please try again."
         ) from exc
     except Exception as exc:
         logger.exception("Gemini analysis failed.")

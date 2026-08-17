@@ -6,9 +6,31 @@ import AnalysisCard from "../components/AnalysisCard";
 
 function Dashboard() {
     const [conversation, setConversation] = useState([]);
+    const [conversationId, setConversationId] = useState(null);
+    const [activeAudioTime, setActiveAudioTime] = useState(null);
+    const [audioSeekTime, setAudioSeekTime] = useState(null);
+
+    const handleResult = (data) => {
+        if (data && data.conversation) {
+            setConversation(data.conversation);
+            setConversationId(data.conversation_id || null);
+        } else if (Array.isArray(data)) {
+            setConversation(data);
+            setConversationId(null);
+        }
+    };
 
     const handleReset = () => {
         setConversation([]);
+        setConversationId(null);
+        setActiveAudioTime(null);
+        setAudioSeekTime(null);
+    };
+
+    const handleSeekAudio = (time) => {
+        setAudioSeekTime(time);
+        // Clear seek request so subsequent clicks on same timestamp register
+        setTimeout(() => setAudioSeekTime(null), 100);
     };
 
     const hasConversation = conversation && conversation.length > 0;
@@ -18,21 +40,28 @@ function Dashboard() {
             <Navbar />
             <main className="main-content">
                 <div className="container">
-                    {/* Upload / Audio Card */}
                     <UploadCard
-                        onResult={setConversation}
+                        onResult={handleResult}
                         conversationExists={hasConversation}
                         onReset={handleReset}
+                        onAudioTimeUpdate={setActiveAudioTime}
+                        audioSeekTime={audioSeekTime}
                     />
 
-                    {/* Results Area */}
                     {hasConversation ? (
                         <div className="dashboard-results-grid">
                             <div className="dashboard-column transcript-column">
-                                <TranscriptCard conversation={conversation} />
+                                <TranscriptCard
+                                    conversation={conversation}
+                                    activeAudioTime={activeAudioTime}
+                                    onSeekAudio={handleSeekAudio}
+                                />
                             </div>
                             <div className="dashboard-column analysis-column">
-                                <AnalysisCard conversation={conversation} />
+                                <AnalysisCard
+                                    conversation={conversation}
+                                    conversationId={conversationId}
+                                />
                             </div>
                         </div>
                     ) : (
