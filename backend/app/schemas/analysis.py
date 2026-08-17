@@ -22,6 +22,8 @@ class AnalysisRequest(BaseModel):
     conversation: List[ConversationTurn] = Field(
         ..., min_length=1, description="Speaker-separated conversation turns."
     )
+    conversation_id: int | None = None
+
 
 
 # ---------------------------------------------------------------------------

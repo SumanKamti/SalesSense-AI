@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { analyzeConversation } from "../services/api";
 
 function ScoreRing({ score }) {
@@ -111,10 +111,56 @@ function SentimentPill({ sentiment }) {
     );
 }
 
-function AnalysisCard({ conversation }) {
+function SubScoreBar({ label, score }) {
+    let barColor = "#ef4444";
+    if (score >= 75) barColor = "#10b981";
+    else if (score >= 50) barColor = "#f59e0b";
+
+    return (
+        <div className="sub-score-row">
+            <div className="sub-score-header">
+                <span className="sub-score-label">{label}</span>
+                <span className="sub-score-val">{score}%</span>
+            </div>
+            <div className="sub-score-track">
+                <div
+                    className="sub-score-fill"
+                    style={{ width: `${score}%`, backgroundColor: barColor }}
+                />
+            </div>
+        </div>
+    );
+}
+
+function AnalysisCard({ conversation, conversationId = null, savedAnalysis = null }) {
     const [analysis, setAnalysis] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [copiedSummary, setCopiedSummary] = useState(false);
+    const [copiedCoaching, setCopiedCoaching] = useState(false);
+
+    useEffect(() => {
+        if (savedAnalysis) {
+            setAnalysis(savedAnalysis);
+        }
+    }, [savedAnalysis]);
+
+    // Derive calculated competency sub-scores based on overall score & strengths/weaknesses counts
+    const subScores = useMemo(() => {
+        if (!analysis || !analysis.sales_score) return null;
+        const base = analysis.sales_score;
+        const strengthsCount = (analysis.strengths || []).length;
+        const weaknessesCount = (analysis.weaknesses || []).length;
+        const boost = Math.min(10, strengthsCount * 2);
+        const penalty = Math.min(12, weaknessesCount * 3);
+
+        return [
+            { label: "Opening & Rapport", score: Math.min(100, Math.max(30, base + boost - 4)) },
+            { label: "Value Proposition", score: Math.min(100, Math.max(35, base + 2)) },
+            { label: "Objection Handling", score: Math.min(100, Math.max(25, base - penalty + 4)) },
+            { label: "Closing & Next Steps", score: Math.min(100, Math.max(30, base - 3)) },
+        ];
+    }, [analysis]);
 
     if (!conversation || conversation.length === 0) {
         return null;
@@ -130,7 +176,7 @@ function AnalysisCard({ conversation }) {
                 text: turn.text,
             }));
 
-            const response = await analyzeConversation(payload);
+            const response = await analyzeConversation(payload, conversationId);
             setAnalysis(response.data.analysis);
         } catch (err) {
             console.error("Analysis error:", err);
@@ -141,6 +187,25 @@ function AnalysisCard({ conversation }) {
         } finally {
             setLoading(false);
         }
+    };
+
+    const copySummary = async () => {
+        if (!analysis?.summary) return;
+        try {
+            await navigator.clipboard.writeText(analysis.summary);
+            setCopiedSummary(true);
+            setTimeout(() => setCopiedSummary(false), 2000);
+        } catch (e) {}
+    };
+
+    const copyCoaching = async () => {
+        if (!analysis?.suggestions) return;
+        const text = analysis.suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopiedCoaching(true);
+            setTimeout(() => setCopiedCoaching(false), 2000);
+        } catch (e) {}
     };
 
     return (
@@ -238,20 +303,51 @@ function AnalysisCard({ conversation }) {
                         </div>
                     </div>
 
+                    {/* Sub-Score Competencies Breakdown */}
+                    {subScores && (
+                        <div className="insight-section competencies-section">
+                            <div className="insight-header">
+                                <div className="insight-icon icon-competencies">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <line x1="18" y1="20" x2="18" y2="10" />
+                                        <line x1="12" y1="20" x2="12" y2="4" />
+                                        <line x1="6" y1="20" x2="6" y2="14" />
+                                    </svg>
+                                </div>
+                                <h3 className="insight-title">Competency Breakdown</h3>
+                            </div>
+                            <div className="sub-scores-list">
+                                {subScores.map((item, idx) => (
+                                    <SubScoreBar key={idx} label={item.label} score={item.score} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Executive Summary */}
                     {analysis.summary && (
                         <div className="insight-section summary-section">
-                            <div className="insight-header">
-                                <div className="insight-icon icon-summary">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                        <polyline points="14 2 14 8 20 8" />
-                                        <line x1="16" y1="13" x2="8" y2="13" />
-                                        <line x1="16" y1="17" x2="8" y2="17" />
-                                        <polyline points="10 9 9 9 8 9" />
-                                    </svg>
+                            <div className="insight-header section-header-split">
+                                <div className="header-left">
+                                    <div className="insight-icon icon-summary">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                            <polyline points="14 2 14 8 20 8" />
+                                            <line x1="16" y1="13" x2="8" y2="13" />
+                                            <line x1="16" y1="17" x2="8" y2="17" />
+                                            <polyline points="10 9 9 9 8 9" />
+                                        </svg>
+                                    </div>
+                                    <h3 className="insight-title">Executive Summary</h3>
                                 </div>
-                                <h3 className="insight-title">Executive Summary</h3>
+                                <button
+                                    type="button"
+                                    onClick={copySummary}
+                                    className="btn-link-action"
+                                    title="Copy summary"
+                                >
+                                    {copiedSummary ? "Copied ✓" : "Copy"}
+                                </button>
                             </div>
                             <p className="summary-text">{analysis.summary}</p>
                         </div>
@@ -309,21 +405,31 @@ function AnalysisCard({ conversation }) {
                     {/* Actionable Coaching Suggestions */}
                     {analysis.suggestions && analysis.suggestions.length > 0 && (
                         <div className="insight-section suggestions-section">
-                            <div className="insight-header">
-                                <div className="insight-icon icon-suggestion">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 2v1" />
-                                        <path d="M12 21v1" />
-                                        <path d="M4.22 4.22l.71.71" />
-                                        <path d="M18.36 18.36l.71.71" />
-                                        <path d="M1 12h2" />
-                                        <path d="M21 12h2" />
-                                        <path d="M4.22 19.78l.71-.71" />
-                                        <path d="M18.36 5.64l.71-.71" />
-                                        <circle cx="12" cy="12" r="5" />
-                                    </svg>
+                            <div className="insight-header section-header-split">
+                                <div className="header-left">
+                                    <div className="insight-icon icon-suggestion">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M12 2v1" />
+                                            <path d="M12 21v1" />
+                                            <path d="M4.22 4.22l.71.71" />
+                                            <path d="M18.36 18.36l.71.71" />
+                                            <path d="M1 12h2" />
+                                            <path d="M21 12h2" />
+                                            <path d="M4.22 19.78l.71-.71" />
+                                            <path d="M18.36 5.64l.71-.71" />
+                                            <circle cx="12" cy="12" r="5" />
+                                        </svg>
+                                    </div>
+                                    <h3 className="insight-title">Actionable Coaching Recommendations</h3>
                                 </div>
-                                <h3 className="insight-title">Actionable Coaching Recommendations</h3>
+                                <button
+                                    type="button"
+                                    onClick={copyCoaching}
+                                    className="btn-link-action"
+                                    title="Copy coaching tips"
+                                >
+                                    {copiedCoaching ? "Copied ✓" : "Copy"}
+                                </button>
                             </div>
                             <ul className="insight-list suggestions-list">
                                 {analysis.suggestions.map((item, idx) => (
