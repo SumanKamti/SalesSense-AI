@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
@@ -15,44 +15,34 @@ from app.services.analysis_service import (
     analyze_conversation,
 )
 
+from app.core.limiter import limiter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def _get_optional_user(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)) -> Optional[User]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization.split(" ", 1)[1]
-    try:
-        from app.core.security import decode_access_token
-        payload = decode_access_token(token)
-        user_id = payload.get("sub")
-        if user_id is None:
-            return None
-        user = db.query(User).filter(User.id == int(user_id)).first()
-        return user
-    except Exception:
-        return None
+from app.core.security import get_optional_user
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
+@limiter.limit("10/minute")
 async def analyze(
-    request: AnalysisRequest,
+    request: Request,
+    analysis_request: AnalysisRequest,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(_get_optional_user),
+    current_user: Optional[User] = Depends(get_optional_user),
 ):
     """Analyze a sales conversation using Gemini AI."""
     try:
-        conversation = [turn.model_dump() for turn in request.conversation]
+        conversation = [turn.model_dump() for turn in analysis_request.conversation]
         result = analyze_conversation(conversation)
 
         # Save analysis to DB if conversation_id is provided and user is authenticated
-        if request.conversation_id and current_user:
+        if analysis_request.conversation_id and current_user:
             db_conv = (
                 db.query(Conversation)
                 .filter(
-                    Conversation.id == request.conversation_id,
+                    Conversation.id == analysis_request.conversation_id,
                     Conversation.user_id == current_user.id,
                 )
                 .first()

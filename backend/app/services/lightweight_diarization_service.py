@@ -64,9 +64,100 @@ def _build_segments_from_labels(
     return segments
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+def _smooth_labels(labels: np.ndarray, window: int = 3) -> np.ndarray:
+    """Apply running majority filter over window labels to eliminate rapid acoustic oscillation."""
+    if len(labels) < window:
+        return labels
+    smoothed = np.copy(labels)
+    half = window // 2
+    for i in range(half, len(labels) - half):
+        neighborhood = labels[i - half : i + half + 1]
+        vals, counts = np.unique(neighborhood, return_counts=True)
+        smoothed[i] = vals[np.argmax(counts)]
+    return smoothed
+
+
+def _detect_single_speaker(valid_embeddings: np.ndarray) -> bool:
+    """Check if all valid speech embeddings belong to a single speaker."""
+    if len(valid_embeddings) < 4:
+        return True
+
+    norms = np.linalg.norm(valid_embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1e-10
+    normed = valid_embeddings / norms
+
+    sim_matrix = np.dot(normed, normed.T)
+    triu_indices = np.triu_indices_from(sim_matrix, k=1)
+    if len(triu_indices[0]) == 0:
+        return True
+
+    sim_values = sim_matrix[triu_indices]
+    mean_sim = float(np.mean(sim_values))
+    min_sim = float(np.percentile(sim_values, 10))
+    std_sim = float(np.std(sim_values))
+
+    logger.info(
+        "Speaker similarity: mean=%.3f, p10=%.3f, std=%.3f",
+        mean_sim, min_sim, std_sim
+    )
+    # Pre-clustering detection:
+    # Only declare single speaker upfront if similarity is exceptionally high and consistent across the entire file
+    if (
+        (len(valid_embeddings) < 15 and mean_sim > 0.88) or
+        mean_sim > 0.90 or
+        (min_sim > 0.80 and std_sim < 0.04)
+    ):
+        return True
+    return False
+
+
+def _verify_cluster_separation(embeddings: np.ndarray, labels: np.ndarray) -> bool:
+    """Verify whether 2 clusters genuinely represent 2 distinct speakers rather than an artificial split of 1 person.
+    
+    Returns:
+        True if 2 distinct speakers exist; False if it's actually 1 speaker.
+    """
+    unique_labels = np.unique(labels)
+    if len(unique_labels) < 2:
+        return False
+
+    c0 = embeddings[labels == unique_labels[0]]
+    c1 = embeddings[labels == unique_labels[1]]
+
+    # If one cluster is negligible (< 1% of speech or fewer than 3 chunks), consider single speaker
+    if len(c0) < 3 or len(c1) < 3 or len(c0) / len(embeddings) < 0.01 or len(c1) / len(embeddings) < 0.01:
+        logger.info("Cluster separation check: one cluster is negligible (<1%% or <3 frames) -> single speaker.")
+        return False
+
+    try:
+        from sklearn.metrics import silhouette_score
+        # Compute cosine distance silhouette score
+        sil = silhouette_score(embeddings, labels, metric="cosine")
+        logger.info("Diarization 2-cluster silhouette score: %.3f", sil)
+
+        # Resemblyzer embeddings for distinct speakers yield silhouette >= 0.14 - 0.25.
+        # Artificial splits of a single monologue typically yield negative or near-zero silhouette (< 0.10).
+        if sil < 0.12:
+            logger.info("Silhouette score (%.3f) is below two-speaker threshold (0.12) -> single speaker.", sil)
+            return False
+
+        # Check between-centroid cosine similarity
+        norm_c0 = np.mean(c0, axis=0)
+        norm_c1 = np.mean(c1, axis=0)
+        norm_c0 /= (np.linalg.norm(norm_c0) + 1e-10)
+        norm_c1 /= (np.linalg.norm(norm_c1) + 1e-10)
+        centroid_sim = float(np.dot(norm_c0, norm_c1))
+        logger.info("Centroid cosine similarity between clusters: %.3f", centroid_sim)
+
+        # If centroids are almost identical (> 0.90), it's the same person
+        if centroid_sim > 0.90:
+            logger.info("Centroid similarity (%.3f) too high -> single speaker.", centroid_sim)
+            return False
+
+        return True
+    except Exception as e:
+        logger.warning("Could not evaluate cluster separation: %s", e)
+        return True
 
 def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
     """Run lightweight speaker diarization on an audio file without time distortion.
@@ -113,8 +204,9 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
         # 3. Compute speaker embeddings
         encoder = VoiceEncoder(device="cpu")
 
-        window_len = 1.5   # 1.5 second analysis window
-        window_step = 0.5  # 0.5 second fine-grained resolution
+        # 1.2 second analysis window and 0.25 second step for fine-grained speaker boundary tracking
+        window_len = 1.2
+        window_step = 0.25
         window_samples = int(window_len * sr)
         step_samples = int(window_step * sr)
 
@@ -122,8 +214,8 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
         start = 0
         while start + window_samples <= len(wav):
             chunk = wav[start : start + window_samples]
-            # Only embed if chunk has audible energy
-            if np.max(np.abs(chunk)) > 0.01:
+            # Embed if chunk has speech energy (> -60 dBFS)
+            if np.max(np.abs(chunk)) > 0.001:
                 emb = encoder.embed_utterance(chunk)
             else:
                 emb = np.zeros(256)
@@ -155,14 +247,47 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
                     nearest = valid_indices[np.argmin(np.abs(valid_indices - i))]
                     embeddings_array[i] = embeddings_array[nearest]
 
-        # 4. Cluster embeddings (2 speakers expected for sales call: Agent & Prospect)
-        clusterer = SpectralClusterer(
-            min_clusters=2,
-            max_clusters=4,
-        )
-        labels = clusterer.predict(embeddings_array)
+            # 4. Check if audio is a single speaker
+            if _detect_single_speaker(embeddings_array[valid_indices]):
+                logger.info("Single speaker detected across audio — assigning all to SPEAKER_00.")
+                return [{
+                    "speaker": "SPEAKER_00",
+                    "start": 0.0,
+                    "end": round(total_duration, 2),
+                }]
 
-        # 5. Convert to timed segments
+        # 5. Cluster embeddings using Agglomerative Clustering on unit-normalized vectors
+        try:
+            from sklearn.cluster import AgglomerativeClustering
+            # Normalize embeddings to unit sphere
+            norms = np.maximum(np.linalg.norm(embeddings_array, axis=1, keepdims=True), 1e-10)
+            normed_embeddings = embeddings_array / norms
+
+            # Ward linkage on unit-normalized vectors minimizes within-cluster variance
+            # and prevents noisy outlier frames from forming single-frame clusters
+            clusterer = AgglomerativeClustering(
+                n_clusters=2,
+                linkage="ward",
+            )
+            raw_labels = clusterer.fit_predict(normed_embeddings)
+        except Exception as cluster_err:
+            logger.warning("Agglomerative clustering failed (%s); falling back to spectral.", cluster_err)
+            clusterer = SpectralClusterer(min_clusters=2, max_clusters=2)
+            raw_labels = clusterer.predict(embeddings_array)
+
+        # Apply smoothing to eliminate 0.5s acoustic blips
+        labels = _smooth_labels(raw_labels, window=3)
+
+        # 6. Post-clustering check: verify if the 2 clusters are genuinely distinct speakers
+        if len(valid_indices) > 0 and not _verify_cluster_separation(embeddings_array[valid_indices], labels[valid_indices]):
+            logger.info("Post-clustering separation check determined audio is a single speaker.")
+            return [{
+                "speaker": "SPEAKER_00",
+                "start": 0.0,
+                "end": round(total_duration, 2),
+            }]
+
+        # 7. Convert to timed segments
         segments = _build_segments_from_labels(
             labels, window_step, total_duration
         )

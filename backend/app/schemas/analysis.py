@@ -15,6 +15,9 @@ class ConversationTurn(BaseModel):
     """A single turn in the conversation."""
     speaker: str
     text: str
+    role: str | None = None
+    start: float | None = None
+    end: float | None = None
 
 
 class AnalysisRequest(BaseModel):

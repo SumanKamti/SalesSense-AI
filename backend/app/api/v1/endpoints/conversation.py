@@ -4,7 +4,7 @@ import os
 import tempfile
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Header
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Header, Request
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
@@ -16,6 +16,7 @@ from app.services.diarization_service import (
     PipelineNotLoadedError,
 )
 
+from app.core.limiter import limiter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -27,28 +28,16 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"}
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
-def _get_optional_user(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)) -> Optional[User]:
-    """Try to extract user from JWT, but don't fail if not provided."""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization.split(" ", 1)[1]
-    try:
-        from app.core.security import decode_access_token
-        payload = decode_access_token(token)
-        user_id = payload.get("sub")
-        if user_id is None:
-            return None
-        user = db.query(User).filter(User.id == int(user_id)).first()
-        return user
-    except Exception:
-        return None
+from app.core.security import get_optional_user
 
 
 @router.post("/analyze")
+@limiter.limit("10/minute")
 async def analyze_conversation(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(_get_optional_user),
+    current_user: Optional[User] = Depends(get_optional_user),
 ):
     """Upload an audio file -> transcribe -> diarize -> merge -> return conversation."""
 
@@ -69,6 +58,27 @@ async def analyze_conversation(
 
         conversation = build_conversation(file_path)
 
+        # Convert all turns to clean native Python types (prevents numpy types from leaking into PostgreSQL)
+        clean_conversation = []
+        for turn in (conversation or []):
+            try:
+                start_val = round(float(turn.get("start", 0.0)), 2)
+            except (ValueError, TypeError):
+                start_val = 0.0
+            try:
+                end_val = round(float(turn.get("end", 0.0)), 2)
+            except (ValueError, TypeError):
+                end_val = 0.0
+
+            clean_conversation.append({
+                "speaker": str(turn.get("speaker", "Unknown")),
+                "role": str(turn.get("role", "Sales Agent")),
+                "start": start_val,
+                "end": end_val,
+                "text": str(turn.get("text", "")).strip(),
+            })
+        conversation = clean_conversation
+
         # Save to database if user is authenticated
         conversation_id = None
         if current_user:
@@ -80,14 +90,14 @@ async def analyze_conversation(
                 if not title.strip():
                     title = "Untitled Call"
             
-            # Calculate duration from last turn's end time
+            # Calculate duration from last turn's end time as a native Python float
             duration = None
             if conversation and len(conversation) > 0:
-                last_turn = conversation[-1]
-                duration = last_turn.get("end", None)
+                duration = float(conversation[-1]["end"])
 
             db_conversation = Conversation(
                 user_id=current_user.id,
+                organization_id=current_user.organization_id,
                 title=title,
                 audio_filename=file.filename or "unknown",
                 duration_seconds=duration,

@@ -7,6 +7,9 @@ from app.api.v1.endpoints import (
     health,
     transcription,
     history,
+    organization,
+    analytics,
+    export,
 )
 
 api_router = APIRouter()
@@ -21,6 +24,12 @@ api_router.include_router(
     auth.router,
     prefix="/auth",
     tags=["Authentication"]
+)
+
+api_router.include_router(
+    organization.router,
+    prefix="/organization",
+    tags=["Organization & Team"]
 )
 
 api_router.include_router(
@@ -52,3 +61,15 @@ api_router.include_router(
     prefix="/history",
     tags=["Call History"]
 )
+
+api_router.include_router(
+    analytics.router,
+    prefix="/analytics",
+    tags=["Manager Analytics"]
+)
+
+api_router.include_router(
+    export.router,
+    prefix="/export",
+    tags=["Data Export & Compliance"]
+)

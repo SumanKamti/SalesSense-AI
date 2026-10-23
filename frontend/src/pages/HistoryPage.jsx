@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { historyAPI } from "../services/api";
+import api, { historyAPI, orgAPI } from "../services/api";
 import Navbar from "../components/Navbar";
 
 function formatDuration(seconds) {
@@ -23,22 +23,45 @@ function formatDate(dateStr) {
 
 function HistoryPage() {
     const [calls, setCalls] = useState([]);
+    const [teamMembers, setTeamMembers] = useState([]);
+    const [selectedRep, setSelectedRep] = useState("all");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
+    const [totalItems, setTotalItems] = useState(0);
     const [scoreFilter, setScoreFilter] = useState("all"); // 'all' | 'high' | 'mid' | 'low'
     const [sortBy, setSortBy] = useState("newest"); // 'newest' | 'oldest' | 'score_desc' | 'score_asc'
     const navigate = useNavigate();
 
+    const currentUser = JSON.parse(localStorage.getItem("salessense_user") || "{}");
+    const isTeamManager = currentUser.organization_id && (currentUser.role === "admin" || currentUser.role === "manager");
+
     useEffect(() => {
         loadCalls();
-    }, []);
+        if (isTeamManager) {
+            loadTeamMembers();
+        }
+    }, [selectedRep, page]);
+
+    const loadTeamMembers = async () => {
+        try {
+            const res = await orgAPI.getTeam();
+            setTeamMembers(res.data);
+        } catch (err) {
+            // Non-critical, fail silently
+        }
+    };
 
     const loadCalls = async () => {
         try {
             setLoading(true);
-            const res = await historyAPI.list();
-            setCalls(res.data);
+            const repParam = selectedRep !== "all" ? parseInt(selectedRep, 10) : null;
+            const res = await historyAPI.list(repParam, page);
+            setCalls(res.data.items || res.data);  // Support both paginated and flat
+            setTotalPages(res.data.total_pages || 1);
+            setTotalItems(res.data.total || (res.data.items || res.data).length);
         } catch (err) {
             setError("Failed to load call history.");
         } finally {
@@ -48,12 +71,12 @@ function HistoryPage() {
 
     const handleDelete = async (id, e) => {
         e.stopPropagation();
-        if (!window.confirm("Delete this call record from your history?")) return;
+        if (!window.confirm("Delete this call record from history?")) return;
         try {
             await historyAPI.delete(id);
             setCalls(calls.filter((c) => c.id !== id));
         } catch (err) {
-            setError("Failed to delete call.");
+            setError(err.response?.data?.detail || "Failed to delete call.");
         }
     };
 
@@ -70,8 +93,8 @@ function HistoryPage() {
         const totalSecs = calls.reduce((acc, c) => acc + (c.duration_seconds || 0), 0);
         const totalMinutes = Math.round(totalSecs / 60);
 
-        return { total: calls.length, avgScore, strongCount, totalMinutes };
-    }, [calls]);
+        return { total: totalItems || calls.length, avgScore, strongCount, totalMinutes };
+    }, [calls, totalItems]);
 
     // Filter & Sort
     const filteredCalls = useMemo(() => {
@@ -82,7 +105,8 @@ function HistoryPage() {
             result = result.filter(
                 (c) =>
                     (c.title && c.title.toLowerCase().includes(q)) ||
-                    (c.audio_filename && c.audio_filename.toLowerCase().includes(q))
+                    (c.audio_filename && c.audio_filename.toLowerCase().includes(q)) ||
+                    (c.user_full_name && c.user_full_name.toLowerCase().includes(q))
             );
         }
 
@@ -129,20 +153,65 @@ function HistoryPage() {
                 <div className="container">
                     <div className="history-header">
                         <div>
-                            <h1 className="page-title">Call History & Repository</h1>
-                            <p className="page-subtitle">Review, analyze, and track performance across your sales calls</p>
+                            <h1 className="page-title">
+                                {isTeamManager ? "Team Call Repository & Analytics" : "Call History & Repository"}
+                            </h1>
+                            <p className="page-subtitle">
+                                {isTeamManager
+                                    ? `Review sales calls across ${currentUser.organization_name || "your organization"}`
+                                    : "Review, analyze, and track performance across your sales calls"}
+                            </p>
                         </div>
-                        <button
-                            type="button"
-                            className="btn-primary btn-nav"
-                            onClick={() => navigate("/dashboard")}
-                        >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                            Analyze New Call
-                        </button>
+                        <div style={{ display: "flex", gap: "10px" }}>
+                            <button
+                                type="button"
+                                className="btn-secondary btn-nav"
+                                onClick={async () => {
+                                    try {
+                                        const res = await api.get("/export/history/csv", { responseType: 'blob' });
+                                        const url = window.URL.createObjectURL(new Blob([res.data]));
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = 'salessense_history.csv';
+                                        a.click();
+                                        window.URL.revokeObjectURL(url);
+                                    } catch (err) {
+                                        alert('Export failed.');
+                                    }
+                                }}
+                            >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Export CSV
+                            </button>
+                            {isTeamManager && (
+                                <button
+                                    type="button"
+                                    className="btn-secondary btn-nav"
+                                    onClick={() => navigate("/team")}
+                                >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                        <circle cx="9" cy="7" r="4" />
+                                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                                    </svg>
+                                    Team Workspace
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="btn-primary btn-nav"
+                                onClick={() => navigate("/dashboard")}
+                            >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                                Analyze New Call
+                            </button>
+                        </div>
                     </div>
 
                     {/* Top KPI Metrics Row */}
@@ -155,19 +224,26 @@ function HistoryPage() {
                             </div>
                             <div className="history-stat-card">
                                 <span className="stat-label">Avg Quality Score</span>
-                                <span className="stat-value">{summaryStats.avgScore}<span className="stat-denom">/100</span></span>
-                                <span className="stat-sub">{summaryStats.avgScore >= 70 ? "Healthy pitch performance" : "Room for coaching"}</span>
+                                <span className="stat-value">
+                                    {summaryStats.avgScore}
+                                    <span className="stat-denom">/100</span>
+                                </span>
+                                <span className="stat-sub">
+                                    {summaryStats.avgScore >= 70 ? "Healthy pitch performance" : "Room for coaching"}
+                                </span>
                             </div>
                             <div className="history-stat-card">
                                 <span className="stat-label">Strong Calls (75+)</span>
                                 <span className="stat-value">{summaryStats.strongCount}</span>
-                                <span className="stat-sub">{Math.round((summaryStats.strongCount / summaryStats.total) * 100)}% of total calls</span>
+                                <span className="stat-sub">
+                                    {Math.round((summaryStats.strongCount / summaryStats.total) * 100)}% of calls
+                                </span>
                             </div>
                         </div>
                     )}
 
                     {/* Filter & Search Toolbar */}
-                    {!loading && calls.length > 0 && (
+                    {(!loading || calls.length > 0) && (
                         <div className="history-toolbar">
                             <div className="history-search-box">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -176,7 +252,7 @@ function HistoryPage() {
                                 </svg>
                                 <input
                                     type="text"
-                                    placeholder="Search by call title or filename..."
+                                    placeholder="Search by call title, filename, or rep name..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     className="history-search-input"
@@ -193,6 +269,23 @@ function HistoryPage() {
                             </div>
 
                             <div className="toolbar-controls-right">
+                                {isTeamManager && teamMembers.length > 0 && (
+                                    <select
+                                        value={selectedRep}
+                                        onChange={(e) => setSelectedRep(e.target.value)}
+                                        className="history-sort-select"
+                                        aria-label="Filter by Sales Rep"
+                                        style={{ maxWidth: "180px" }}
+                                    >
+                                        <option value="all">👤 All Team Reps</option>
+                                        {teamMembers.map((m) => (
+                                            <option key={m.id} value={m.id}>
+                                                {m.full_name} ({m.role})
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
+
                                 <div className="filter-pill-group">
                                     <button
                                         type="button"
@@ -245,7 +338,7 @@ function HistoryPage() {
                             <span>Loading call repository...</span>
                         </div>
                     ) : error ? (
-                        <div className="alert-box alert-error">
+                        <div className="alert-box alert-error" role="alert">
                             <div className="alert-content">{error}</div>
                         </div>
                     ) : calls.length === 0 ? (
@@ -281,6 +374,7 @@ function HistoryPage() {
                                     onClick={() => {
                                         setSearchQuery("");
                                         setScoreFilter("all");
+                                        setSelectedRep("all");
                                     }}
                                     style={{ marginTop: "12px" }}
                                 >
@@ -294,6 +388,7 @@ function HistoryPage() {
                                 <thead>
                                     <tr>
                                         <th>Call Discussion</th>
+                                        {isTeamManager && <th>Sales Rep</th>}
                                         <th>Date Recorded</th>
                                         <th>Duration</th>
                                         <th>Quality Score</th>
@@ -308,7 +403,7 @@ function HistoryPage() {
                                             onClick={() => navigate(`/history/${call.id}`)}
                                             className="history-row"
                                         >
-                                            <td>
+                                            <td data-label="Call Discussion">
                                                 <div className="call-title-cell">
                                                     <div className="call-file-icon">
                                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -323,27 +418,34 @@ function HistoryPage() {
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td className="cell-date">{formatDate(call.created_at)}</td>
-                                            <td className="cell-duration">{formatDuration(call.duration_seconds)}</td>
-                                            <td>
+                                            {isTeamManager && (
+                                                <td data-label="Sales Rep">
+                                                    <span style={{ fontWeight: "600", fontSize: "13px" }}>
+                                                        {call.user_full_name || "Team Member"}
+                                                    </span>
+                                                </td>
+                                            )}
+                                            <td data-label="Date Recorded" className="cell-date">{formatDate(call.created_at)}</td>
+                                            <td data-label="Duration" className="cell-duration">{formatDuration(call.duration_seconds)}</td>
+                                            <td data-label="Quality Score">
                                                 {call.sales_score !== null && call.sales_score !== undefined ? (
-                                                    <span className={`score-badge ${getScoreClass(call.sales_score)}`}>
-                                                        {call.sales_score}/100
-                                                    </span>
+                                                     <span className={`score-badge ${getScoreClass(call.sales_score)}`}>
+                                                         {call.sales_score}/100
+                                                     </span>
                                                 ) : (
-                                                    <span className="badge-pending">Pending</span>
+                                                     <span className="badge-pending">Pending</span>
                                                 )}
                                             </td>
-                                            <td>
+                                            <td data-label="Sentiment">
                                                 {call.sentiment ? (
-                                                    <span className={`sentiment-pill-sm ${getSentimentClass(call.sentiment)}`}>
-                                                        {call.sentiment}
-                                                    </span>
+                                                     <span className={`sentiment-pill-sm ${getSentimentClass(call.sentiment)}`}>
+                                                         {call.sentiment}
+                                                     </span>
                                                 ) : (
-                                                    <span className="badge-pending">—</span>
+                                                     <span className="badge-pending">—</span>
                                                 )}
                                             </td>
-                                            <td>
+                                            <td data-label="Actions">
                                                 <button
                                                     type="button"
                                                     className="btn-icon-danger"
@@ -361,6 +463,29 @@ function HistoryPage() {
                                     ))}
                                 </tbody>
                             </table>
+                        </div>
+                    )}
+                    {totalPages > 1 && (
+                        <div className="pagination-bar">
+                            <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                disabled={page <= 1}
+                                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            >
+                                ← Previous
+                            </button>
+                            <span className="pagination-info">
+                                Page {page} of {totalPages} · {totalItems} total calls
+                            </span>
+                            <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                disabled={page >= totalPages}
+                                onClick={() => setPage((p) => p + 1)}
+                            >
+                                Next →
+                            </button>
                         </div>
                     )}
                 </div>

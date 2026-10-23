@@ -33,35 +33,34 @@ class APIKeyMissingError(Exception):
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """You are an expert sales conversation analyst.
-You will be given a sales conversation between speakers.
+You will be given a sales conversation or recording (which may be a dialogue between Sales Agent and Prospect, or a monologue/voicemail by a single person).
 Analyze ONLY the supplied conversation. Do NOT invent information.
 
 Return your analysis as a single JSON object with exactly these keys:
-- "summary": a short paragraph summarizing the conversation.
-- "sentiment": one of "Positive", "Neutral", or "Negative" — the overall customer sentiment.
-- "sales_score": an integer from 0 to 100 rating the sales agent's performance.
-- "strengths": an array of strings listing what the sales agent did well.
-- "weaknesses": an array of strings listing areas where the sales agent could improve.
-- "suggestions": an array of strings with actionable recommendations for the sales agent.
+- "summary": a short paragraph summarizing the conversation or voicemail message.
+- "sentiment": one of "Positive", "Neutral", or "Negative" — the overall customer or caller sentiment.
+- "sales_score": an integer from 0 to 100 rating performance or call clarity.
+- "strengths": an array of strings listing what was done well (clarity, tone, responsiveness).
+- "weaknesses": an array of strings listing areas for improvement.
+- "suggestions": an array of strings with actionable next steps or recommendations.
 
 Rules:
 - Return ONLY the JSON object. No markdown, no code fences, no extra text.
 - strengths, weaknesses, and suggestions should each have 2-5 items.
-- Be specific and reference actual parts of the conversation."""
+- Be specific and reference actual parts of the audio transcript.
+- If there is only one speaker (e.g. voicemail, solo inquiry, or solo pitch), summarize the single speaker's message accurately without hallucinating a non-existent second party."""
 
 
-def _format_conversation(conversation: List[Dict[str, str]]) -> str:
-    """Format the conversation list into a readable transcript string."""
+def _format_conversation(conversation: List[Dict[str, Any]]) -> str:
+    """Format the conversation list into a readable transcript string with accurate roles."""
     lines = []
     for turn in conversation:
+        # Prefer explicit role if present
+        role = turn.get("role")
         speaker = turn.get("speaker", "Unknown")
-        # Map SPEAKER_00 to Sales Agent, others to Customer (matches frontend)
-        if speaker == "SPEAKER_00":
-            speaker = "Sales Agent"
-        elif speaker.startswith("SPEAKER_"):
-            speaker = "Customer"
+        label = role if role else ("Sales Agent" if speaker == "SPEAKER_00" else "Prospect")
         text = turn.get("text", "")
-        lines.append(f"{speaker}: {text}")
+        lines.append(f"{label}: {text}")
     return "\n".join(lines)
 
 
@@ -123,6 +122,7 @@ def analyze_conversation(conversation: List[Dict[str, Any]]) -> Dict[str, Any]:
                     config=genai.types.GenerateContentConfig(
                         system_instruction=_SYSTEM_PROMPT,
                         temperature=0.3,
+                        response_mime_type="application/json",
                     ),
                 )
                 if response and response.text:
@@ -148,15 +148,35 @@ def analyze_conversation(conversation: List[Dict[str, Any]]) -> Dict[str, Any]:
         raw_text = response.text.strip()
         logger.info("Gemini response received (%d chars).", len(raw_text))
 
-        # --- Parse JSON ---
-        # Strip markdown code fences if Gemini returns them despite instructions
+        # --- Parse JSON with robust sanitization and repair ---
+        # 1. Strip markdown code fences if present
         if raw_text.startswith("```"):
-            raw_text = raw_text.strip("`")
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
+            raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+            raw_text = re.sub(r"\n?```$", "", raw_text)
             raw_text = raw_text.strip()
 
-        result = json.loads(raw_text)
+        # 2. Extract outer JSON object if wrapped in explanatory text
+        match = re.search(r"(\{.*\})", raw_text, re.DOTALL)
+        if match:
+            raw_text = match.group(1).strip()
+
+        try:
+            result = json.loads(raw_text)
+        except json.JSONDecodeError as json_err:
+            logger.warning("Standard JSON parse failed (%s). Attempting regex repair...", json_err)
+            # Remove trailing commas before } or ]
+            repaired_text = re.sub(r",\s*([\]}])", r"\1", raw_text)
+            try:
+                result = json.loads(repaired_text)
+            except Exception:
+                # If still failing, attempt dirty-json or python literal eval fallback
+                try:
+                    import ast
+                    # Only eval if it looks like a dict literal
+                    result = ast.literal_eval(raw_text)
+                except Exception:
+                    logger.error("Failed to parse Gemini response: %s", raw_text[:500])
+                    raise AnalysisError("Gemini returned an unparseable response. Please try again.") from json_err
 
         # --- Validate required fields ---
         required_keys = {

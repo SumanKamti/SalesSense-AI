@@ -1,6 +1,54 @@
+# Python
 venv/
+.venv/
 __pycache__/
-.env
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite3
+alembic/versions/__pycache__/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Uploads & Reports
 uploads/
 reports/
+app/uploads/*
+!app/uploads/.gitkeep
+backend/app/uploads/*
+!backend/app/uploads/.gitkeep
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

@@ -33,6 +33,19 @@ function Dashboard() {
         setTimeout(() => setAudioSeekTime(null), 100);
     };
 
+    const handleSwapRoles = () => {
+        setConversation((prev) =>
+            prev.map((turn) => {
+                const currentRole = turn.role || (turn.speaker === "SPEAKER_00" ? "Sales Agent" : "Prospect");
+                const nextRole = currentRole === "Sales Agent" ? "Prospect" : "Sales Agent";
+                return {
+                    ...turn,
+                    role: nextRole,
+                };
+            })
+        );
+    };
+
     const hasConversation = conversation && conversation.length > 0;
 
     return (
@@ -55,6 +68,7 @@ function Dashboard() {
                                     conversation={conversation}
                                     activeAudioTime={activeAudioTime}
                                     onSeekAudio={handleSeekAudio}
+                                    onSwapRoles={handleSwapRoles}
                                 />
                             </div>
                             <div className="dashboard-column analysis-column">

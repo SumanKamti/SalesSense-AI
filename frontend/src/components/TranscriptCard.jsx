@@ -27,12 +27,13 @@ function HighlightText({ text, query }) {
     );
 }
 
-function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = null }) {
+function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = null, onSwapRoles = null }) {
     const bottomRef = useRef(null);
     const activeRowRef = useRef(null);
     const [copied, setCopied] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [speakerFilter, setSpeakerFilter] = useState("all"); // 'all' | 'agent' | 'prospect'
+    const [localSwapped, setLocalSwapped] = useState(false);
 
     // Scroll active spoken turn into view smoothly during playback
     useEffect(() => {
@@ -44,11 +45,31 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
         }
     }, [activeAudioTime]);
 
+    // Helper to get effective role of a turn
+    const getTurnRole = (turn) => {
+        let baseRole = turn.role;
+        if (!baseRole) {
+            baseRole = turn.speaker === "SPEAKER_00" ? "Sales Agent" : "Prospect";
+        }
+        if (localSwapped && !onSwapRoles) {
+            return baseRole === "Sales Agent" ? "Prospect" : "Sales Agent";
+        }
+        return baseRole;
+    };
+
+    const handleSwapRoles = () => {
+        if (onSwapRoles) {
+            onSwapRoles();
+        } else {
+            setLocalSwapped((prev) => !prev);
+        }
+    };
+
     const handleCopy = async () => {
         if (!conversation || conversation.length === 0) return;
         const text = conversation
             .map((t) => {
-                const role = t.speaker === "SPEAKER_00" ? "Sales Agent" : "Prospect";
+                const role = getTurnRole(t);
                 const time = `${formatTime(t.start)} - ${formatTime(t.end)}`;
                 return `[${time}] ${role}: ${t.text}`;
             })
@@ -63,23 +84,31 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
         }
     };
 
-    // Calculate metrics
+    // Calculate metrics based on effective roles
     const stats = useMemo(() => {
         if (!conversation || conversation.length === 0) {
-            return { total: 0, agentTurns: 0, prospectTurns: 0, agentRatio: 50, prospectRatio: 50 };
+            return { total: 0, agentTurns: 0, prospectTurns: 0, agentRatio: 50, prospectRatio: 50, isSingleSpeaker: false, singleRole: "" };
         }
-        const agentTurns = conversation.filter((t) => t.speaker === "SPEAKER_00").length;
+        const uniqueSpeakers = new Set(conversation.map((t) => t.speaker || "SPEAKER_00"));
+        const roles = new Set(conversation.map((t) => getTurnRole(t)));
+        const isSingleSpeaker = uniqueSpeakers.size <= 1 || roles.size <= 1;
+        const singleRole = roles.size === 1 ? Array.from(roles)[0] : "Speaker";
+
+        const agentTurns = conversation.filter((t) => getTurnRole(t) === "Sales Agent").length;
         const prospectTurns = conversation.length - agentTurns;
-        const agentRatio = Math.round((agentTurns / conversation.length) * 100);
+        const agentRatio = isSingleSpeaker 
+            ? (agentTurns > 0 ? 100 : 0)
+            : Math.round((agentTurns / conversation.length) * 100);
         const prospectRatio = 100 - agentRatio;
-        return { total: conversation.length, agentTurns, prospectTurns, agentRatio, prospectRatio };
-    }, [conversation]);
+        return { total: conversation.length, agentTurns, prospectTurns, agentRatio, prospectRatio, isSingleSpeaker, singleRole };
+    }, [conversation, localSwapped]);
 
     // Filter conversation by search and speaker
     const filteredConversation = useMemo(() => {
         if (!conversation) return [];
         return conversation.filter((turn) => {
-            const isAgent = turn.speaker === "SPEAKER_00";
+            const role = getTurnRole(turn);
+            const isAgent = role === "Sales Agent";
             if (speakerFilter === "agent" && !isAgent) return false;
             if (speakerFilter === "prospect" && isAgent) return false;
 
@@ -88,7 +117,7 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
             }
             return true;
         });
-    }, [conversation, speakerFilter, searchQuery]);
+    }, [conversation, speakerFilter, searchQuery, localSwapped]);
 
     if (!conversation || conversation.length === 0) {
         return (
@@ -118,47 +147,82 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
                     <h2 className="card-title">Conversation Transcript</h2>
                     <div className="transcript-meta-pills">
                         <span className="meta-pill">{stats.total} Turns</span>
-                        <span className="meta-pill agent-pill">{stats.agentTurns} Agent ({stats.agentRatio}%)</span>
-                        <span className="meta-pill customer-pill">{stats.prospectTurns} Prospect ({stats.prospectRatio}%)</span>
+                        {stats.isSingleSpeaker ? (
+                            <span className="meta-pill" style={{ background: "var(--primary-subtle)", color: "var(--primary)", borderColor: "var(--primary-border)" }}>
+                                👤 Single Speaker ({stats.singleRole})
+                            </span>
+                        ) : (
+                            <>
+                                <span className="meta-pill agent-pill">{stats.agentTurns} Agent ({stats.agentRatio}%)</span>
+                                <span className="meta-pill customer-pill">{stats.prospectTurns} Prospect ({stats.prospectRatio}%)</span>
+                            </>
+                        )}
                     </div>
                 </div>
-                <button
-                    type="button"
-                    onClick={handleCopy}
-                    className="btn-secondary btn-sm"
-                    title="Copy full transcript to clipboard"
-                >
-                    {copied ? (
-                        <>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="20 6 9 17 4 12" />
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    {!stats.isSingleSpeaker && (
+                        <button
+                            type="button"
+                            onClick={handleSwapRoles}
+                            className="btn-secondary btn-sm"
+                            title="Swap Sales Agent and Prospect roles"
+                            style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
+                        >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="17 1 21 5 17 9" />
+                                <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                                <polyline points="7 23 3 19 7 15" />
+                                <path d="M21 13v2a4 4 0 0 1-4 4H3" />
                             </svg>
-                            Copied
-                        </>
-                    ) : (
-                        <>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                            Copy
-                        </>
+                            Swap Roles
+                        </button>
                     )}
-                </button>
+                    <button
+                        type="button"
+                        onClick={handleCopy}
+                        className="btn-secondary btn-sm"
+                        title="Copy full transcript to clipboard"
+                    >
+                        {copied ? (
+                            <>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                Copied
+                            </>
+                        ) : (
+                            <>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                Copy
+                            </>
+                        )}
+                    </button>
+                </div>
             </div>
 
             {/* Talk-time balance indicator */}
-            <div className="talk-ratio-wrapper" title={`Agent: ${stats.agentRatio}% | Prospect: ${stats.prospectRatio}%`}>
-                <div className="talk-ratio-bar">
-                    <div className="ratio-segment segment-agent" style={{ width: `${stats.agentRatio}%` }} />
-                    <div className="ratio-segment segment-prospect" style={{ width: `${stats.prospectRatio}%` }} />
+            {!stats.isSingleSpeaker ? (
+                <div className="talk-ratio-wrapper" title={`Agent: ${stats.agentRatio}% | Prospect: ${stats.prospectRatio}%`}>
+                    <div className="talk-ratio-bar">
+                        <div className="ratio-segment segment-agent" style={{ width: `${stats.agentRatio}%` }} />
+                        <div className="ratio-segment segment-prospect" style={{ width: `${stats.prospectRatio}%` }} />
+                    </div>
+                    <div className="talk-ratio-labels">
+                        <span className="ratio-label agent-color">Agent: {stats.agentRatio}%</span>
+                        <span className="ratio-hint">Click any line to jump audio</span>
+                        <span className="ratio-label prospect-color">Prospect: {stats.prospectRatio}%</span>
+                    </div>
                 </div>
-                <div className="talk-ratio-labels">
-                    <span className="ratio-label agent-color">Agent: {stats.agentRatio}%</span>
-                    <span className="ratio-hint">Click any line to jump audio</span>
-                    <span className="ratio-label prospect-color">Prospect: {stats.prospectRatio}%</span>
+            ) : (
+                <div className="talk-ratio-wrapper" style={{ padding: "6px 12px" }}>
+                    <div className="talk-ratio-labels" style={{ justifyContent: "center" }}>
+                        <span className="ratio-hint">Monologue audio — 100% spoken by {stats.singleRole}. Click any line to jump audio.</span>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Search & Speaker Filter Controls */}
             <div className="transcript-controls">
@@ -186,29 +250,31 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
                     )}
                 </div>
 
-                <div className="filter-pill-group">
-                    <button
-                        type="button"
-                        className={`filter-pill ${speakerFilter === "all" ? "filter-pill-active" : ""}`}
-                        onClick={() => setSpeakerFilter("all")}
-                    >
-                        All
-                    </button>
-                    <button
-                        type="button"
-                        className={`filter-pill ${speakerFilter === "agent" ? "filter-pill-active" : ""}`}
-                        onClick={() => setSpeakerFilter("agent")}
-                    >
-                        Agent
-                    </button>
-                    <button
-                        type="button"
-                        className={`filter-pill ${speakerFilter === "prospect" ? "filter-pill-active" : ""}`}
-                        onClick={() => setSpeakerFilter("prospect")}
-                    >
-                        Prospect
-                    </button>
-                </div>
+                {!stats.isSingleSpeaker && (
+                    <div className="filter-pill-group">
+                        <button
+                            type="button"
+                            className={`filter-pill ${speakerFilter === "all" ? "filter-pill-active" : ""}`}
+                            onClick={() => setSpeakerFilter("all")}
+                        >
+                            All
+                        </button>
+                        <button
+                            type="button"
+                            className={`filter-pill ${speakerFilter === "agent" ? "filter-pill-active" : ""}`}
+                            onClick={() => setSpeakerFilter("agent")}
+                        >
+                            Agent
+                        </button>
+                        <button
+                            type="button"
+                            className={`filter-pill ${speakerFilter === "prospect" ? "filter-pill-active" : ""}`}
+                            onClick={() => setSpeakerFilter("prospect")}
+                        >
+                            Prospect
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Chat Stream */}
@@ -219,8 +285,8 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
                     </div>
                 ) : (
                     filteredConversation.map((turn, idx) => {
-                        const isAgent = turn.speaker === "SPEAKER_00";
-                        const role = isAgent ? "Sales Agent" : "Prospect";
+                        const role = getTurnRole(turn);
+                        const isAgent = role === "Sales Agent";
 
                         // Active playback state check
                         const isActive =

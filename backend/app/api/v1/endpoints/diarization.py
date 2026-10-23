@@ -1,7 +1,10 @@
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Request, Depends
 import logging
 import os
 import tempfile
+from app.core.limiter import limiter
+from app.core.security import get_current_user
+from app.models.user import User
 
 from app.services.diarization_service import (
     DiarizationError,
@@ -20,7 +23,8 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".webm"}
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 @router.post("/diarize")
-async def diarize(file: UploadFile = File(...)):
+@limiter.limit("5/minute")
+async def diarize(request: Request, file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
     """Upload an audio file and receive speaker-segmented diarization."""
 
     ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""

@@ -1,6 +1,7 @@
-from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
+from pydantic import BaseModel
+
 
 class ConversationListItem(BaseModel):
     id: int
@@ -10,7 +11,12 @@ class ConversationListItem(BaseModel):
     sales_score: Optional[int] = None
     sentiment: Optional[str] = None
     created_at: datetime
+    user_id: Optional[int] = None
+    user_full_name: Optional[str] = None
+    organization_id: Optional[int] = None
+
     model_config = {"from_attributes": True}
+
 
 class ConversationDetail(ConversationListItem):
     transcript_json: Optional[str] = None

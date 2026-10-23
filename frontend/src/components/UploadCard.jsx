@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import api from "../services/api";
+import WaveformPlayer from "./WaveformPlayer";
 
 function UploadCard({ onResult, conversationExists, onReset, onAudioTimeUpdate, audioSeekTime }) {
     const [selectedFile, setSelectedFile] = useState(null);
@@ -7,13 +8,8 @@ function UploadCard({ onResult, conversationExists, onReset, onAudioTimeUpdate, 
     const [loading, setLoading] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
     const [error, setError] = useState(null);
-    const [playbackRate, setPlaybackRate] = useState(1);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [currentTime, setCurrentTime] = useState(0);
-    const [duration, setDuration] = useState(0);
 
     const fileInputRef = useRef(null);
-    const audioRef = useRef(null);
 
     // Track elapsed time during analysis
     useEffect(() => {
@@ -37,13 +33,7 @@ function UploadCard({ onResult, conversationExists, onReset, onAudioTimeUpdate, 
         };
     }, [audioUrl]);
 
-    // Respond to external seek requests (e.g. from TranscriptCard click)
-    useEffect(() => {
-        if (audioSeekTime !== null && audioSeekTime !== undefined && audioRef.current) {
-            audioRef.current.currentTime = audioSeekTime;
-            audioRef.current.play().catch(() => {});
-        }
-    }, [audioSeekTime]);
+    // File selection handlers
 
     const handleFile = (file) => {
         if (file && file.type.startsWith("audio/")) {
@@ -90,9 +80,6 @@ function UploadCard({ onResult, conversationExists, onReset, onAudioTimeUpdate, 
     const handleRemoveFile = () => {
         setSelectedFile(null);
         setError(null);
-        setCurrentTime(0);
-        setDuration(0);
-        setIsPlaying(false);
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
@@ -137,62 +124,6 @@ function UploadCard({ onResult, conversationExists, onReset, onAudioTimeUpdate, 
             return `${(bytes / 1024).toFixed(1)} KB`;
         }
         return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    };
-
-    const formatTimeStr = (secs) => {
-        if (isNaN(secs) || secs === null || secs === undefined) return "0:00";
-        const m = Math.floor(secs / 60);
-        const s = Math.floor(secs % 60);
-        return `${m}:${s < 10 ? "0" : ""}${s}`;
-    };
-
-    const handleTimeUpdate = () => {
-        if (audioRef.current) {
-            const cur = audioRef.current.currentTime;
-            setCurrentTime(cur);
-            if (onAudioTimeUpdate) {
-                onAudioTimeUpdate(cur);
-            }
-        }
-    };
-
-    const handleLoadedMetadata = () => {
-        if (audioRef.current) {
-            setDuration(audioRef.current.duration);
-        }
-    };
-
-    const togglePlay = () => {
-        if (!audioRef.current) return;
-        if (isPlaying) {
-            audioRef.current.pause();
-        } else {
-            audioRef.current.play().catch(() => {});
-        }
-    };
-
-    const skipTime = (offset) => {
-        if (audioRef.current) {
-            audioRef.current.currentTime = Math.max(0, Math.min(duration, audioRef.current.currentTime + offset));
-        }
-    };
-
-    const cyclePlaybackRate = () => {
-        const rates = [1, 1.25, 1.5, 2];
-        const nextIdx = (rates.indexOf(playbackRate) + 1) % rates.length;
-        const nextRate = rates[nextIdx];
-        setPlaybackRate(nextRate);
-        if (audioRef.current) {
-            audioRef.current.playbackRate = nextRate;
-        }
-    };
-
-    const handleSeekChange = (e) => {
-        const target = parseFloat(e.target.value);
-        setCurrentTime(target);
-        if (audioRef.current) {
-            audioRef.current.currentTime = target;
-        }
     };
 
     return (
@@ -285,87 +216,11 @@ function UploadCard({ onResult, conversationExists, onReset, onAudioTimeUpdate, 
                     </div>
 
                     {audioUrl && (
-                        <div className="custom-audio-player">
-                            <audio
-                                ref={audioRef}
-                                src={audioUrl}
-                                preload="metadata"
-                                onTimeUpdate={handleTimeUpdate}
-                                onLoadedMetadata={handleLoadedMetadata}
-                                onPlay={() => setIsPlaying(true)}
-                                onPause={() => setIsPlaying(false)}
-                                onEnded={() => setIsPlaying(false)}
-                            />
-                            
-                            <div className="player-main-controls">
-                                <button
-                                    type="button"
-                                    className="btn-play-pause"
-                                    onClick={togglePlay}
-                                    title={isPlaying ? "Pause" : "Play"}
-                                >
-                                    {isPlaying ? (
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                            <rect x="6" y="4" width="4" height="16" rx="1" />
-                                            <rect x="14" y="4" width="4" height="16" rx="1" />
-                                        </svg>
-                                    ) : (
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                                            <polygon points="5 3 19 12 5 21 5 3" />
-                                        </svg>
-                                    )}
-                                </button>
-
-                                <button
-                                    type="button"
-                                    className="btn-player-sub"
-                                    onClick={() => skipTime(-10)}
-                                    title="Rewind 10 seconds"
-                                >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M1 4v6h6" />
-                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                                    </svg>
-                                    <span>-10s</span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    className="btn-player-sub"
-                                    onClick={() => skipTime(10)}
-                                    title="Forward 10 seconds"
-                                >
-                                    <span>+10s</span>
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M23 4v6h-6" />
-                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                                    </svg>
-                                </button>
-
-                                <div className="player-timeline">
-                                    <span className="player-time">{formatTimeStr(currentTime)}</span>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max={duration || 100}
-                                        step="0.1"
-                                        value={currentTime}
-                                        onChange={handleSeekChange}
-                                        className="player-slider"
-                                    />
-                                    <span className="player-time player-duration">{formatTimeStr(duration)}</span>
-                                </div>
-
-                                <button
-                                    type="button"
-                                    className="btn-playback-rate"
-                                    onClick={cyclePlaybackRate}
-                                    title="Toggle Playback Speed"
-                                >
-                                    {playbackRate}x
-                                </button>
-                            </div>
-                        </div>
+                        <WaveformPlayer
+                            audioUrl={audioUrl}
+                            onAudioTimeUpdate={onAudioTimeUpdate}
+                            audioSeekTime={audioSeekTime}
+                        />
                     )}
 
                     {!conversationExists && (

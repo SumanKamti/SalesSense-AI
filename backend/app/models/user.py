@@ -1,11 +1,14 @@
-from datetime import datetime
-from sqlalchemy import Column, DateTime, Integer, String
+from datetime import datetime, timezone
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database.base import Base
+
 
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
 
     full_name = Column(String(100), nullable=False)
 
@@ -20,11 +23,15 @@ class User(Base):
 
     role = Column(
         String(50),
-        default="manager",
+        default="rep",
         nullable=False
-    )
+    )  # "admin", "manager", "rep"
 
     created_at = Column(
-        DateTime,
-        default=datetime.utcnow
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
     )
+
+    # Relationships
+    organization = relationship("Organization", back_populates="members", foreign_keys=[organization_id])
+    conversations = relationship("Conversation", back_populates="user")
