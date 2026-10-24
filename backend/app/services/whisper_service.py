@@ -29,14 +29,17 @@ def load_whisper_model(model_name: Optional[str] = None) -> None:
         return
 
     logger.info("Attempting to load Faster-Whisper model (%s, cpu, %s)...", target_name, compute_type)
+    num_threads = min(4, os.cpu_count() or 4)
     try:
         _model = WhisperModel(
             target_name,
             device="cpu",
             compute_type=compute_type,
+            cpu_threads=num_threads,
+            num_workers=1,
         )
         _model_name = target_name
-        logger.info("Faster-Whisper model (%s) loaded successfully.", target_name)
+        logger.info("Faster-Whisper model (%s) loaded with %d threads.", target_name, num_threads)
     except Exception as exc:
         logger.warning(
             "Failed to load Faster-Whisper model '%s' (%s). Falling back to 'base'...",
@@ -47,6 +50,8 @@ def load_whisper_model(model_name: Optional[str] = None) -> None:
                 "base",
                 device="cpu",
                 compute_type="int8",
+                cpu_threads=num_threads,
+                num_workers=1,
             )
             _model_name = "base"
             logger.info("Faster-Whisper fallback model ('base') loaded successfully.")

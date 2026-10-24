@@ -438,6 +438,57 @@ def _refine_conversation_dialogue(
         return turns
 
 
+def _detect_and_tag_interruptions(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Detect and tag conversational interruptions, barge-ins, and overlapping transitions."""
+    if len(turns) < 2:
+        for t in turns:
+            t["is_interruption"] = False
+        return turns
+
+    interruption_starters = (
+        "sorry to interrupt", "wait,", "wait.", "wait ", "hold on", "excuse me",
+        "can you hear me", "can i just", "let me interrupt", "no, but", "actually,",
+        "wait a second", "hello?", "pardon me", "hang on"
+    )
+
+    for i in range(len(turns)):
+        turn = turns[i]
+        turn["is_interruption"] = False
+
+        if i == 0:
+            continue
+
+        prev_turn = turns[i - 1]
+        prev_speaker = prev_turn.get("speaker")
+        curr_speaker = turn.get("speaker")
+
+        # Only speaker changes can be interruptions
+        if prev_speaker == curr_speaker:
+            continue
+
+        prev_text = prev_turn.get("text", "").strip()
+        curr_text = turn.get("text", "").strip().lower()
+
+        # Check gap between previous end and current start
+        gap = turn.get("start", 0) - prev_turn.get("end", 0)
+
+        # 1. Negative or near-zero gap (< 0.15s) while previous turn was still speaking
+        is_timing_overlap = gap < 0.15
+
+        # 2. Previous turn was cut off (did NOT end with sentence terminator . ? !)
+        prev_incomplete = len(prev_text) > 0 and not any(prev_text.endswith(p) for p in [".", "?", "!"])
+
+        # 3. Explicit verbal interruption cue
+        has_verbal_cue = any(curr_text.startswith(starter) for starter in interruption_starters)
+
+        # 4. Barge-in condition
+        if (is_timing_overlap and prev_incomplete) or (has_verbal_cue and gap < 0.8) or (gap < 0.05 and len(prev_text.split()) > 4):
+            turn["is_interruption"] = True
+            turn["interrupted_speaker"] = prev_speaker
+
+    return turns
+
+
 def build_conversation(audio_path: str) -> List[Dict[str, Any]]:
     """Run transcription + diarization and produce granular conversation turns with role labels.
 
@@ -488,6 +539,9 @@ def build_conversation(audio_path: str) -> List[Dict[str, Any]]:
     if words and _needs_dialogue_refinement(turns):
         logger.info("Turns need dialogue refinement (merged turns or skewed distribution in conversational text). Refining...")
         turns = _refine_conversation_dialogue(turns, words)
+
+    # Step 6 — Detect and tag interruptions & conversational barge-ins
+    turns = _detect_and_tag_interruptions(turns)
 
     logger.info("Conversation built successfully: %d turn(s)", len(turns))
     return turns

@@ -87,7 +87,7 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
     // Calculate metrics based on effective roles
     const stats = useMemo(() => {
         if (!conversation || conversation.length === 0) {
-            return { total: 0, agentTurns: 0, prospectTurns: 0, agentRatio: 50, prospectRatio: 50, isSingleSpeaker: false, singleRole: "" };
+            return { total: 0, agentTurns: 0, prospectTurns: 0, agentRatio: 50, prospectRatio: 50, isSingleSpeaker: false, singleRole: "", interruptionsCount: 0 };
         }
         const uniqueSpeakers = new Set(conversation.map((t) => t.speaker || "SPEAKER_00"));
         const roles = new Set(conversation.map((t) => getTurnRole(t)));
@@ -100,7 +100,8 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
             ? (agentTurns > 0 ? 100 : 0)
             : Math.round((agentTurns / conversation.length) * 100);
         const prospectRatio = 100 - agentRatio;
-        return { total: conversation.length, agentTurns, prospectTurns, agentRatio, prospectRatio, isSingleSpeaker, singleRole };
+        const interruptionsCount = conversation.filter((t) => t.is_interruption).length;
+        return { total: conversation.length, agentTurns, prospectTurns, agentRatio, prospectRatio, isSingleSpeaker, singleRole, interruptionsCount };
     }, [conversation, localSwapped]);
 
     // Filter conversation by search and speaker
@@ -147,6 +148,11 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
                     <h2 className="card-title">Conversation Transcript</h2>
                     <div className="transcript-meta-pills">
                         <span className="meta-pill">{stats.total} Turns</span>
+                        {stats.interruptionsCount > 0 && (
+                            <span className="meta-pill" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#d97706", borderColor: "rgba(245, 158, 11, 0.3)" }}>
+                                ⚡ {stats.interruptionsCount} Interruption{stats.interruptionsCount > 1 ? "s" : ""}
+                            </span>
+                        )}
                         {stats.isSingleSpeaker ? (
                             <span className="meta-pill" style={{ background: "var(--primary-subtle)", color: "var(--primary)", borderColor: "var(--primary-border)" }}>
                                 👤 Single Speaker ({stats.singleRole})
@@ -212,7 +218,11 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
                     </div>
                     <div className="talk-ratio-labels">
                         <span className="ratio-label agent-color">Agent: {stats.agentRatio}%</span>
-                        <span className="ratio-hint">Click any line to jump audio</span>
+                        <span className="ratio-hint">
+                            {stats.interruptionsCount > 0
+                                ? `⚡ ${stats.interruptionsCount} Interruption${stats.interruptionsCount > 1 ? "s" : ""} • Click any line to jump audio`
+                                : "Click any line to jump audio"}
+                        </span>
                         <span className="ratio-label prospect-color">Prospect: {stats.prospectRatio}%</span>
                     </div>
                 </div>
@@ -320,6 +330,25 @@ function TranscriptCard({ conversation, activeAudioTime = null, onSeekAudio = nu
                                 <div className="chat-bubble">
                                     <div className="chat-meta">
                                         <span className="chat-role">{role}</span>
+                                        {turn.is_interruption && (
+                                            <span
+                                                style={{
+                                                    fontSize: "10px",
+                                                    fontWeight: "700",
+                                                    padding: "2px 7px",
+                                                    borderRadius: "12px",
+                                                    backgroundColor: "rgba(245, 158, 11, 0.15)",
+                                                    color: "#d97706",
+                                                    border: "1px solid rgba(245, 158, 11, 0.3)",
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: "3px"
+                                                }}
+                                                title="Speaker interrupted or cut in before previous turn finished"
+                                            >
+                                                ⚡ Interrupted
+                                            </span>
+                                        )}
                                         {(turn.start !== undefined || turn.end !== undefined) && (
                                             <span className="chat-timestamp">
                                                 {formatTime(turn.start)} – {formatTime(turn.end)}
