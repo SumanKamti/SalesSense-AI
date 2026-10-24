@@ -9,10 +9,13 @@ pipeline. It runs in seconds rather than minutes on machines without a GPU.
 """
 
 import logging
+import os
 from typing import Any, Dict, List
 
 import librosa
 import numpy as np
+
+from app.services.audio_preprocessing import preprocess_speech_audio
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +104,12 @@ def _detect_single_speaker(valid_embeddings: np.ndarray) -> bool:
         mean_sim, min_sim, std_sim
     )
     # Pre-clustering detection:
-    # Only declare single speaker upfront if similarity is exceptionally high and consistent across the entire file
+    # Only declare single speaker upfront if similarity is exceptionally high and consistent across the entire file.
+    # On phone calls, telephone codecs inflate baseline similarity, so threshold is safely set to >0.93.
     if (
-        (len(valid_embeddings) < 15 and mean_sim > 0.88) or
-        mean_sim > 0.90 or
-        (min_sim > 0.80 and std_sim < 0.04)
+        (len(valid_embeddings) < 15 and mean_sim > 0.92) or
+        mean_sim > 0.94 or
+        (min_sim > 0.86 and std_sim < 0.025)
     ):
         return True
     return False
@@ -113,7 +117,7 @@ def _detect_single_speaker(valid_embeddings: np.ndarray) -> bool:
 
 def _verify_cluster_separation(embeddings: np.ndarray, labels: np.ndarray) -> bool:
     """Verify whether 2 clusters genuinely represent 2 distinct speakers rather than an artificial split of 1 person.
-    
+
     Returns:
         True if 2 distinct speakers exist; False if it's actually 1 speaker.
     """
@@ -135,10 +139,9 @@ def _verify_cluster_separation(embeddings: np.ndarray, labels: np.ndarray) -> bo
         sil = silhouette_score(embeddings, labels, metric="cosine")
         logger.info("Diarization 2-cluster silhouette score: %.3f", sil)
 
-        # Resemblyzer embeddings for distinct speakers yield silhouette >= 0.14 - 0.25.
-        # Artificial splits of a single monologue typically yield negative or near-zero silhouette (< 0.10).
-        if sil < 0.12:
-            logger.info("Silhouette score (%.3f) is below two-speaker threshold (0.12) -> single speaker.", sil)
+        # On phone/VoIP audio, phone filters lower the silhouette; 0.07 ensures legitimate caller dialogue is preserved
+        if sil < 0.07:
+            logger.info("Silhouette score (%.3f) is below two-speaker threshold (0.07) -> single speaker.", sil)
             return False
 
         # Check between-centroid cosine similarity
@@ -149,8 +152,8 @@ def _verify_cluster_separation(embeddings: np.ndarray, labels: np.ndarray) -> bo
         centroid_sim = float(np.dot(norm_c0, norm_c1))
         logger.info("Centroid cosine similarity between clusters: %.3f", centroid_sim)
 
-        # If centroids are almost identical (> 0.90), it's the same person
-        if centroid_sim > 0.90:
+        # If centroids are almost identical (> 0.94), it's the same person
+        if centroid_sim > 0.94:
             logger.info("Centroid similarity (%.3f) too high -> single speaker.", centroid_sim)
             return False
 
@@ -159,14 +162,15 @@ def _verify_cluster_separation(embeddings: np.ndarray, labels: np.ndarray) -> bo
         logger.warning("Could not evaluate cluster separation: %s", e)
         return True
 
+
 def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
     """Run lightweight speaker diarization on an audio file without time distortion.
 
     Algorithm
     ---------
-    1. Load audio and resample to 16 kHz (resemblyzer requirement).
-    2. Normalize volume WITHOUT silence trimming (preserving 100% time sync).
-    3. Slide a 1.5-second window across the audio and compute speaker embeddings.
+    1. Preprocess audio to filter phone line noise and normalize volume.
+    2. Resample to 16 kHz (resemblyzer requirement).
+    3. Slide a 1.2-second window with 0.25-second step across speech audio.
     4. Cluster the embeddings to separate agent vs prospect.
     5. Convert labels into timed ``{speaker, start, end}`` segments.
 
@@ -179,11 +183,13 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
     from resemblyzer import VoiceEncoder, normalize_volume
     from spectralcluster import SpectralClusterer
 
+    audio_to_diarize, is_temp = preprocess_speech_audio(audio_path)
+
     try:
         logger.info("Starting lightweight diarization for: %s", audio_path)
 
         # 1. Load audio (16kHz mono)
-        wav, sr = librosa.load(audio_path, sr=16000, mono=True)
+        wav, sr = librosa.load(audio_to_diarize, sr=16000, mono=True)
         total_duration = len(wav) / sr
         logger.info(
             "Audio loaded — %.1f seconds, %d Hz", total_duration, sr
@@ -238,7 +244,7 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
             }]
 
         embeddings_array = np.array(embeddings)
-        
+
         # Replace silent zero embeddings with nearest valid embedding
         valid_indices = np.where(np.linalg.norm(embeddings_array, axis=1) > 0.1)[0]
         if len(valid_indices) > 0:
@@ -264,7 +270,6 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
             normed_embeddings = embeddings_array / norms
 
             # Ward linkage on unit-normalized vectors minimizes within-cluster variance
-            # and prevents noisy outlier frames from forming single-frame clusters
             clusterer = AgglomerativeClustering(
                 n_clusters=2,
                 linkage="ward",
@@ -275,7 +280,7 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
             clusterer = SpectralClusterer(min_clusters=2, max_clusters=2)
             raw_labels = clusterer.predict(embeddings_array)
 
-        # Apply smoothing to eliminate 0.5s acoustic blips
+        # Apply smoothing to eliminate rapid acoustic blips
         labels = _smooth_labels(raw_labels, window=3)
 
         # 6. Post-clustering check: verify if the 2 clusters are genuinely distinct speakers
@@ -305,3 +310,9 @@ def diarize_audio(audio_path: str) -> List[Dict[str, Any]]:
         raise DiarizationError(
             f"Failed to diarize audio file '{audio_path}': {exc}"
         ) from exc
+    finally:
+        if is_temp and os.path.exists(audio_to_diarize):
+            try:
+                os.remove(audio_to_diarize)
+            except OSError:
+                pass

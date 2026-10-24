@@ -102,11 +102,11 @@ def analyze_conversation(conversation: List[Dict[str, Any]]) -> Dict[str, Any]:
         # --- Call Gemini with active, supported models ---
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
         candidate_models = [
-            "gemini-flash-latest",
-            "gemini-flash-lite-latest",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3.5-flash",
             "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-3-flash-preview",
+            "gemini-flash-latest",
         ]
 
         response = None

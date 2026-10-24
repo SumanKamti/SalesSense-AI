@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
-    # AI / Diarization
+    # AI / Speech Recognition & Diarization
+    WHISPER_MODEL: str = "small"  # "small", "base", "medium", "distil-large-v3"
+    WHISPER_COMPUTE_TYPE: str = "int8"  # "int8", "float16", "float32"
+    AUDIO_PREPROCESSING_ENABLED: bool = True  # Noise hum filter and AGC audio normalization
     HUGGINGFACE_TOKEN: str = ""
     DIARIZATION_MODEL: str = "pyannote/speaker-diarization-3.1"
     DIARIZATION_ENGINE: str = "lightweight"  # "lightweight" or "pyannote"
@@ -47,5 +50,4 @@ class Settings(BaseSettings):
         return self
 
 
-
-settings = Settings()
+settings = Settings()

@@ -11,8 +11,10 @@ Algorithm
 2. Transcribe audio with word-level timestamps via Faster-Whisper.
 3. Align each word to its active speaker.
 4. Smooth transient single-word acoustic flickers.
-5. Group words into natural turns based on sentence boundaries and pauses.
+5. Group words into natural turns based on sentence boundaries, acoustic pauses,
+   and anti-monolith safeguards.
 6. Semantically infer roles (Sales Agent vs Prospect) based on dialogue cues.
+7. Refine dialogue turns using Google Gemini 2.5 Flash if merged turns are detected.
 """
 
 import json
@@ -54,13 +56,13 @@ def infer_speaker_roles(turns: List[Dict[str, Any]]) -> Dict[str, str]:
     if not speakers:
         return {}
     if len(speakers) == 1:
-        # Check if the single speaker is a prospect/caller leaving a voicemail/query or an agent pitching
         spk = speakers[0]
         full_text = " ".join(t.get("text", "") for t in turns).lower()
         prospect_indicators = [
             "i'm calling to", "i am calling to", "i'm calling about", "i am calling about",
-            "i called to", "i purchased", "i bought", "my account", "give me a call",
-            "call me back", "my number is", "my phone number", "please call", "question about"
+            "i'm calling regarding", "i called to", "i purchased", "i bought", "my account",
+            "give me a call", "call me back", "my number is", "my phone number", "please call",
+            "question about", "i wanted to know", "can i change"
         ]
         is_prospect = any(p in full_text for p in prospect_indicators)
         role = "Prospect" if is_prospect else "Sales Agent"
@@ -69,28 +71,25 @@ def infer_speaker_roles(turns: List[Dict[str, Any]]) -> Dict[str, str]:
     agent_phrases = [
         "thank you for calling", "thanks for calling", "thank you for reaching",
         "how can i help", "how can i assist", "how may i help", "can i help you",
-        "welcome to", "calling from",
-        "customer service", "customer support", "our support", "support team",
-        "i can help you with that", "i'll help you out", "let me help",
-        "let me check", "let me look", "on your account", "your account",
+        "welcome to", "calling from", "customer service", "customer support",
+        "our support", "support team", "i can help you with that", "i'll help you out",
+        "let me help", "let me check", "let me look", "on your account", "your account",
         "can i have your", "can i get your", "your email address", "your phone number",
         "reversed that charge", "reversed the charge", "issued a refund", "credit back",
-        "account balance", "right pass is expired", "pass is expired", "is expired",
-        "is there anything else", "anything else you want me to do", "have a great day",
-        "schedule a demo", "our pricing", "our product", "our service"
+        "account balance", "did you know you can get help", "online chat", "extended wait times",
+        "experiencing extended wait", "our chat team", "press any key", "stay on the line",
+        "well as long as", "you can definitely swap", "would you like me to check",
+        "there you go i can hear you", "sorry for the interruption", "you're welcome"
     ]
     prospect_phrases = [
         "i purchased", "i just purchased", "i bought", "i ordered", "i was charged",
-        "took my money", "takes my money", "take my money", "got charged",
-        "refund my money", "get a refund", "give me a refund", "reversed my charge",
-        "started beeping", "wasn't working", "didn't work", "didn't go nowhere",
-        "i was trying to", "i'm trying to", "trying to get to work", "running late",
-        "i'm calling about", "i am calling about", "i'm calling to", "i am calling to",
-        "i have an issue", "i have a problem", "can anything be done",
-        "my last ride", "my ride", "scooter ride", "the scooter",
-        "i know i know", "i've been a loyal customer", "loyal customer",
-        "how much does it cost", "does it come with", "is that sold separately",
-        "do you have", "what is the price", "can i get"
+        "took my money", "got charged", "refund my money", "get a refund", "give me a refund",
+        "reversed my charge", "started beeping", "wasn't working", "didn't work",
+        "i'm calling regarding", "i am calling regarding", "i'm calling about", "i am calling about",
+        "i wanted to know", "will i be able to change", "can i change it", "different store",
+        "can you hear me now", "can you hear me", "i can hear you now", "hello can you hear me",
+        "i have an issue", "i have a problem", "how much does it cost", "does it come with",
+        "what is the price", "i just wanted to make sure", "is that the case"
     ]
 
     scores: Dict[str, float] = {s: 0.0 for s in speakers}
@@ -107,7 +106,6 @@ def infer_speaker_roles(turns: List[Dict[str, Any]]) -> Dict[str, str]:
     sorted_speakers = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     best_agent = sorted_speakers[0][0]
 
-    # If scores are identical (e.g. 0 vs 0), fallback to question counter
     if scores[sorted_speakers[0][0]] == scores[sorted_speakers[1][0]]:
         q_counts = {s: 0 for s in speakers}
         for turn in turns:
@@ -128,7 +126,7 @@ def _group_words_into_turns(
     words: List[Dict[str, Any]],
     diarization_segments: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Assign speakers per word, smooth flickers, and group into conversational turns."""
+    """Assign speakers per word, smooth flickers, and group into conversational turns with anti-monolith safeguards."""
     if not words:
         return []
 
@@ -144,7 +142,7 @@ def _group_words_into_turns(
             "speaker": spk,
         })
 
-    # 2. Smooth single-word flickers: [A, B, A] flanked closely by same speaker -> A
+    # 2. Smooth single-word flickers: [A, B, A] -> A
     n = len(labeled_words)
     if n > 2:
         for i in range(1, n - 1):
@@ -157,7 +155,7 @@ def _group_words_into_turns(
             if prev_spk == next_spk and curr_spk != prev_spk and gap_before < 0.4 and gap_after < 0.4:
                 labeled_words[i]["speaker"] = prev_spk
 
-    # 3. Form natural conversation turns
+    # 3. Form natural conversation turns with sentence pauses and anti-monolith guards
     turns: List[Dict[str, Any]] = []
     curr = {
         "speaker": labeled_words[0]["speaker"],
@@ -166,25 +164,49 @@ def _group_words_into_turns(
         "words": [labeled_words[0]["word"]],
     }
 
+    prospect_transition_prefixes = (
+        "i'm calling", "i am calling", "i wanted to know", "will i be able", "can i change",
+        "can you hear me", "i purchased", "i bought", "i have a question", "is that the case",
+        "hello?", "hello ma'am?", "hello sir?"
+    )
+    agent_transition_prefixes = (
+        "thank you for calling", "how can i help", "you want to know", "you're calling",
+        "well as long as", "did you know", "we're sorry", "there you go", "would you like me",
+        "all right. it's too late", "you're welcome"
+    )
+
     for idx in range(1, len(labeled_words)):
         w = labeled_words[idx]
         prev_word = curr["words"][-1]
         prev_has_punct = any(prev_word.endswith(p) for p in [".", "?", "!", ","])
+        prev_is_sentence_end = any(prev_word.endswith(p) for p in [".", "?", "!"])
         gap = w["start"] - curr["end"]
         spk_changed = (w["speaker"] != curr["speaker"])
+        curr_duration = curr["end"] - curr["start"]
+        curr_word_count = len(curr["words"])
 
-        # Check if following words also belong to new speaker (streak check)
+        # Check lookahead streak (2+ consecutive words of new speaker)
         next_also_new_spk = False
         if spk_changed and idx + 1 < len(labeled_words):
             next_also_new_spk = (labeled_words[idx + 1]["speaker"] == w["speaker"])
 
-        # Turn break conditions:
-        # - Long speech pause (> 2.5s)
-        # - Speaker changed after punctuation or natural pause (gap >= 0.15s)
-        # - Speaker changed with multiple consecutive words (clear speaker takeover)
+        # Look ahead at the next 4 words to detect conversational dialogue shifts
+        upcoming_text = " ".join(labeled_words[k]["word"].lower() for k in range(idx, min(idx + 5, len(labeled_words))))
+        has_prospect_shift = any(upcoming_text.startswith(p) for p in prospect_transition_prefixes)
+        has_agent_shift = any(upcoming_text.startswith(a) for a in agent_transition_prefixes)
+
+        # Split conditions:
+        # 1. Natural turn-taking silence (>= 0.7s) after sentence end
+        # 2. Extended audio silence (> 2.0s)
+        # 3. Acoustic speaker change accompanied by punctuation, natural gap, or multi-word streak
+        # 4. Anti-monolith safeguard: prevent any turn from exceeding 16s or 32 words when a sentence breaks
+        # 5. Distinct conversational phrase transition between sentences
         should_split = (
-            gap > 2.5 or
-            (spk_changed and (prev_has_punct or gap >= 0.15 or next_also_new_spk))
+            (prev_is_sentence_end and gap >= 0.7) or
+            gap > 2.0 or
+            (spk_changed and (prev_has_punct or gap >= 0.12 or next_also_new_spk)) or
+            (prev_is_sentence_end and gap >= 0.35 and (curr_duration > 16.0 or curr_word_count > 32)) or
+            (prev_is_sentence_end and (has_prospect_shift or has_agent_shift))
         )
 
         if should_split:
@@ -230,12 +252,13 @@ def _needs_dialogue_refinement(turns: List[Dict[str, Any]]) -> bool:
     agent_cues = [
         "thank you for calling", "how can i help", "welcome to", "customer support",
         "can i help you", "have a great day", "did you know you can get help", "our chat team",
-        "can i have your", "can i get your", "let me help", "i can help you with that"
+        "can i have your", "can i get your", "let me help", "i can help you with that",
+        "you want to know", "well as long as", "you can definitely swap"
     ]
     prospect_cues = [
         "i called", "i purchased", "i'm calling", "can you hear me", "gift card",
         "gift vouchers", "my account", "refund", "how much", "change it to a different",
-        "i wanted to know", "i was wondering"
+        "i wanted to know", "i was wondering", "will i be able"
     ]
 
     has_agent = any(k in full_text for k in agent_cues)
@@ -248,19 +271,19 @@ def _needs_dialogue_refinement(turns: List[Dict[str, Any]]) -> bool:
         if len(turns) >= 3 and any("?" in t.get("text", "") for t in turns):
             return True
 
-    # Condition 2: Imbalanced turns (e.g. 1 speaker has > 85% of turns despite both cues present)
+    # Condition 2: Imbalanced turns (e.g. 1 speaker has > 80% of turns despite both cues present)
     agent_turn_count = sum(1 for t in turns if t.get("role") == "Sales Agent")
     ratio = agent_turn_count / len(turns)
-    if (ratio >= 0.85 or ratio <= 0.15) and has_agent and has_prospect:
+    if (ratio >= 0.80 or ratio <= 0.20) and has_agent and has_prospect:
         return True
 
     # Condition 3: Any single turn contains large blocks of alternating speech
     for t in turns:
         txt = t.get("text", "").lower()
-        if len(txt.split()) > 30:
+        if len(txt.split()) > 25:
             if (
-                any(a in txt for a in ["how can i", "hello, ma 'am", "you're welcome", "did you know", "there you go"]) and
-                any(p in txt for p in ["i'm calling", "i purchased", "can you hear me", "change it", "i wanted to know"])
+                any(a in txt for a in ["how can i", "hello, ma 'am", "you're welcome", "did you know", "there you go", "as long as the gift card"]) and
+                any(p in txt for p in ["i'm calling", "i purchased", "can you hear me", "change it", "i wanted to know", "will i be able"])
             ):
                 return True
 
@@ -271,7 +294,7 @@ def _align_turns_with_words(
     parsed_turns: List[Dict[str, Any]],
     words: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Align AI-segmented dialogue turns with Whisper word-level timestamps."""
+    """Align AI-segmented dialogue turns with Whisper word-level timestamps using token window matching."""
     if not parsed_turns or not words:
         return []
 
@@ -296,14 +319,18 @@ def _align_turns_with_words(
         search_idx = word_idx
         matched_count = 0
 
+        # Look forward within a reasonable window proportional to turn size
+        search_window = max(len(clean_tokens) + 15, 25)
+        limit = min(search_idx + search_window, total_words)
+
         for tok in clean_tokens:
-            limit = min(search_idx + 40, total_words)
-            while search_idx < limit:
-                if clean_tok(words[search_idx]["word"]) == tok:
+            curr_pos = search_idx
+            while curr_pos < limit:
+                if clean_tok(words[curr_pos]["word"]) == tok:
                     matched_count += 1
-                    search_idx += 1
+                    search_idx = curr_pos + 1
                     break
-                search_idx += 1
+                curr_pos += 1
 
         if matched_count >= max(1, len(clean_tokens) // 2):
             turn_end_idx = max(turn_start_idx, min(search_idx - 1, total_words - 1))
@@ -314,8 +341,8 @@ def _align_turns_with_words(
 
         start_time = float(words[turn_start_idx]["start"])
         end_time = float(words[turn_end_idx]["end"])
-        if end_time < start_time:
-            end_time = round(start_time + 0.5, 2)
+        if end_time <= start_time:
+            end_time = round(start_time + 0.6, 2)
 
         role = turn.get("role", "Sales Agent")
         speaker = "SPEAKER_00" if role == "Sales Agent" else "SPEAKER_01"
@@ -335,7 +362,7 @@ def _refine_conversation_dialogue(
     turns: List[Dict[str, Any]],
     words: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Use Gemini to segment merged or misclassified turns into proper speaker dialogue."""
+    """Use Gemini 2.5 Flash to segment merged or misclassified turns into proper speaker dialogue."""
     if not settings.GEMINI_API_KEY:
         return turns
 
@@ -343,11 +370,11 @@ def _refine_conversation_dialogue(
         from google import genai
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
         candidate_models = [
-            "gemini-flash-latest",
-            "gemini-flash-lite-latest",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3.5-flash",
             "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-3-flash-preview",
+            "gemini-flash-latest",
         ]
 
         full_transcript = " ".join(t.get("text", "") for t in turns).strip()
@@ -356,12 +383,12 @@ def _refine_conversation_dialogue(
 
         prompt = (
             "You are an expert dialogue segmentation system for customer support and sales calls.\n"
-            "The following transcript was produced by speech recognition, but speakers may have been mistakenly merged into single large paragraphs, or automated hold messages and live agents may be conflated.\n\n"
+            "The following transcript was produced by speech recognition, but multiple speaker turns were merged together into large paragraphs, or automated hold messages and live agents were conflated.\n\n"
             "TASK:\n"
             "Carefully segment the text into precise conversation turns between 'Sales Agent' and 'Prospect'.\n\n"
             "ROLES:\n"
-            "- 'Sales Agent': The customer service representative, sales rep, or automated IVR / hold announcement system. (Phrases like 'how can I help', 'thank you for calling', 'can you hear me', 'did you know you can get help', 'I can help with your gift card', etc.)\n"
-            "- 'Prospect': The customer, caller, or buyer. (Phrases like 'I'm calling regarding my gift vouchers', 'can I change it to a different store?', 'yes', 'can you hear me now?', 'I purchased', etc.)\n\n"
+            "- 'Sales Agent': The customer service representative, sales rep, or automated IVR / hold announcement system. (Phrases like 'how can I help', 'thank you for calling', 'can you hear me', 'did you know you can get help', 'I can help with your gift card', 'well as long as', etc.)\n"
+            "- 'Prospect': The customer, caller, or buyer. (Phrases like 'I'm calling regarding my gift vouchers', 'can I change it to a different store?', 'yes', 'can you hear me now?', 'I purchased', 'is that the case', etc.)\n\n"
             "RULES:\n"
             "1. If this audio is a SINGLE-PERSON MONOLOGUE or VOICEMAIL (only 1 person spoke throughout), assign all turns to the single appropriate role ('Prospect' for customer voicemail, 'Sales Agent' for solo agent pitch) without creating an imaginary dialogue.\n"
             "2. If this is a CONVERSATION between two parties, SPLIT EVERY DIALOGUE EXCHANGE so that the customer's statements/answers and the agent's statements/questions are in separate turns.\n"
@@ -383,6 +410,7 @@ def _refine_conversation_dialogue(
                     ),
                 )
                 if response and response.text:
+                    logger.info("AI dialogue refinement succeeded with model: %s", model_name)
                     break
             except Exception as e:
                 logger.warning("AI turn refinement failed with %s: %s", model_name, e)
@@ -431,11 +459,11 @@ def build_conversation(audio_path: str) -> List[Dict[str, Any]]:
     """
     logger.info("Building conversation for: %s", audio_path)
 
-    # Step 1 — Diarize speaker segments
+    # Step 1 — Diarize speaker segments (with volume normalization and noise filtering)
     diarization_segments = diarize_audio(audio_path)
     logger.info("Diarization: %d speaker segment(s)", len(diarization_segments))
 
-    # Step 2 — Transcribe word-level timestamped tokens
+    # Step 2 — Transcribe word-level timestamped tokens (with telephone audio enhancement)
     words = transcribe_audio_words(audio_path)
     logger.info("Transcription: %d word(s) extracted", len(words))
 
@@ -446,7 +474,7 @@ def build_conversation(audio_path: str) -> List[Dict[str, Any]]:
             seg["speaker"] = _find_speaker_for_time((seg["start"] + seg["end"]) / 2.0, diarization_segments)
         turns = transcription_segments
     else:
-        # Step 3 — Group words into fine-grained conversation turns
+        # Step 3 — Group words into fine-grained conversation turns with anti-monolith safeguards
         turns = _group_words_into_turns(words, diarization_segments)
 
     # Step 4 — Infer semantic roles (Sales Agent vs Prospect)
@@ -456,9 +484,9 @@ def build_conversation(audio_path: str) -> List[Dict[str, Any]]:
     for turn in turns:
         turn["role"] = roles.get(turn["speaker"], "Sales Agent")
 
-    # Step 5 — Intelligent dialogue refinement
+    # Step 5 — Intelligent dialogue refinement (Gemini 2.5 Flash)
     if words and _needs_dialogue_refinement(turns):
-        logger.info("Turns need dialogue refinement (merged turns or single speaker detected in conversational text). Refining...")
+        logger.info("Turns need dialogue refinement (merged turns or skewed distribution in conversational text). Refining...")
         turns = _refine_conversation_dialogue(turns, words)
 
     logger.info("Conversation built successfully: %d turn(s)", len(turns))
